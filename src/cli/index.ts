@@ -6,6 +6,8 @@ import { runIndexCommand } from './commands/index.js';
 import { runSearchCommand } from './commands/search.js';
 import { runAnalyzeCommand } from './commands/analyze.js';
 import { runContextCommand } from './commands/context.js';
+import { runWatchCommand } from './commands/watch.js';
+import { runStopCommand } from './commands/stop.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { openDatabase, deleteIndex } from '../storage/lance.js';
 import { getDbPath } from './utils/paths.js';
@@ -398,6 +400,60 @@ program
         console.log(formatContextMarkdown(result));
       } else {
         console.log(JSON.stringify(result, null, 2));
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Watch command - starts the daemon to watch for file changes
+program
+  .command('watch <path>')
+  .description('Start watching a directory for changes')
+  .option('-n, --name <name>', 'Name for the index')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (path: string, options: { name?: string; json?: boolean }) => {
+    try {
+      const result = await runWatchCommand(path, {
+        name: options.name,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('watch', result));
+      } else {
+        console.log(`Watching ${path} as '${result.indexName}' (PID: ${result.pid})`);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Stop command - stops a running watch daemon
+program
+  .command('stop <name>')
+  .description('Stop watching an index')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name: string, options: { json?: boolean }) => {
+    try {
+      const result = await runStopCommand(name, {
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('stop', result));
+      } else {
+        console.log(`Stopped watcher for '${result.indexName}'`);
       }
     } catch (err) {
       if (options.json) {

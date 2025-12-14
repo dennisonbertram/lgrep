@@ -16,6 +16,20 @@ export default defineConfig([
       js: '#!/usr/bin/env node',
     },
   },
+  // Daemon worker entry with shebang
+  {
+    entry: {
+      'daemon/worker': 'src/daemon/worker.ts',
+    },
+    format: ['esm'],
+    dts: true,
+    sourcemap: true,
+    target: 'node18',
+    shims: true,
+    banner: {
+      js: '#!/usr/bin/env node',
+    },
+  },
   // Library entry without shebang
   {
     entry: {
