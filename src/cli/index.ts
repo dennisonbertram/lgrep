@@ -8,6 +8,7 @@ import { runAnalyzeCommand } from './commands/analyze.js';
 import { runContextCommand } from './commands/context.js';
 import { runWatchCommand } from './commands/watch.js';
 import { runStopCommand } from './commands/stop.js';
+import { runSetupCommand } from './commands/setup.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { openDatabase, deleteIndex } from '../storage/lance.js';
 import { getDbPath } from './utils/paths.js';
@@ -18,6 +19,75 @@ program
   .name('mgrep')
   .description('Local semantic search CLI - privacy-first, mixedbread.ai quality without the cloud')
   .version('0.1.0');
+
+// Setup command - installs Ollama and pulls required models
+program
+  .command('setup')
+  .description('Install Ollama and pull required models')
+  .option('--skip-summarization', 'Skip pulling the summarization model')
+  .option('--no-auto-install', 'Do not auto-install Ollama (show instructions only)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { skipSummarization?: boolean; autoInstall?: boolean; json?: boolean }) => {
+    try {
+      if (!options.json) {
+        console.log('Setting up mgrep...\n');
+      }
+
+      const result = await runSetupCommand({
+        skipSummarization: options.skipSummarization,
+        autoInstall: options.autoInstall,
+        json: options.json,
+        onProgress: options.json ? undefined : (step: string, status?: string) => {
+          const stepLabels: Record<string, string> = {
+            'check-install': 'Checking Ollama installation',
+            'install': 'Installing Ollama',
+            'check-running': 'Checking Ollama status',
+            'pull-embed': 'Pulling embedding model',
+            'pull-summarization': 'Pulling summarization model',
+            'health-check': 'Running health check',
+          };
+
+          const label = stepLabels[step] || step;
+          if (status) {
+            console.log(`  ${label}: ${status}`);
+          } else {
+            console.log(`  ${label}...`);
+          }
+        },
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('setup', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`\nSetup failed: ${result.error}`);
+        if (result.instructions) {
+          console.error(`\n${result.instructions}`);
+        }
+        process.exit(1);
+      }
+
+      // Success output
+      console.log('\nSetup complete!');
+      console.log(`  ${result.ollamaInstalled ? '✓' : '✗'} Ollama installed${result.installed ? ' (newly installed)' : ''}`);
+      console.log(`  ${result.ollamaRunning ? '✓' : '✗'} Ollama running`);
+      console.log(`  ${result.embedModelPulled ? '✓' : '✗'} Embedding model ready`);
+      if (!options.skipSummarization) {
+        console.log(`  ${result.summarizationModelPulled ? '✓' : '✗'} Summarization model ready`);
+      }
+      console.log(`  ${result.healthCheckPassed ? '✓' : '✗'} Health check passed`);
+      console.log('\nmgrep is ready to use!');
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
 
 // Index command - fully implemented
 program
