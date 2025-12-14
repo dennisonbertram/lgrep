@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { runWatchCommand } from './watch.js';
 import { DaemonManager } from '../../daemon/manager.js';
+import { runIndexCommand } from './index.js';
+import { openDatabase, getIndex } from '../../storage/lance.js';
 
 // Mock the daemon manager class
 vi.mock('../../daemon/manager.js', () => {
@@ -13,6 +15,17 @@ vi.mock('../../daemon/manager.js', () => {
   DaemonManager.prototype.status = vi.fn();
   return { DaemonManager };
 });
+
+// Mock the index command
+vi.mock('./index.js', () => ({
+  runIndexCommand: vi.fn(),
+}));
+
+// Mock the storage/lance module
+vi.mock('../../storage/lance.js', () => ({
+  openDatabase: vi.fn(),
+  getIndex: vi.fn(),
+}));
 
 describe('watch command', () => {
   let testDir: string;
@@ -28,6 +41,15 @@ describe('watch command', () => {
 
     // Reset mocks
     vi.clearAllMocks();
+
+    // Setup default mocks for database operations
+    const mockDb = { path: testDir, connection: {}, close: vi.fn() };
+    vi.mocked(openDatabase).mockResolvedValue(mockDb as never);
+    vi.mocked(getIndex).mockResolvedValue({
+      name: 'test-index',
+      metadata: {} as never,
+      table: null
+    });
   });
 
   afterEach(async () => {
@@ -159,6 +181,105 @@ describe('watch command', () => {
       await expect(
         runWatchCommand(testDir, { name: 'test-index' })
       ).rejects.toThrow(/failed to start daemon/i);
+    });
+  });
+
+  describe('auto-index creation', () => {
+    it('should check if index exists before starting watcher', async () => {
+      const mockDb = { path: testDir, connection: {}, close: vi.fn() };
+      const mockDaemonInfo = {
+        indexName: 'test-index',
+        pid: 12345,
+        rootPath: testDir,
+        startedAt: '2024-01-01T00:00:00Z',
+        status: 'running' as const,
+      };
+
+      // Mock that index already exists
+      vi.mocked(openDatabase).mockResolvedValue(mockDb as never);
+      vi.mocked(getIndex).mockResolvedValue({
+        name: 'test-index',
+        metadata: {} as never,
+        table: null
+      });
+      vi.mocked(DaemonManager.prototype.status).mockResolvedValue(null);
+      vi.mocked(DaemonManager.prototype.start).mockResolvedValue(mockDaemonInfo);
+
+      await runWatchCommand(testDir, { name: 'test-index' });
+
+      // Should check if index exists
+      expect(openDatabase).toHaveBeenCalled();
+      expect(getIndex).toHaveBeenCalledWith(mockDb, 'test-index');
+
+      // Should NOT run indexing since index exists
+      expect(runIndexCommand).not.toHaveBeenCalled();
+
+      // Should start watcher
+      expect(DaemonManager.prototype.start).toHaveBeenCalled();
+    });
+
+    it('should create index if it does not exist before starting watcher', async () => {
+      const mockDb = { path: testDir, connection: {}, close: vi.fn() };
+      const mockDaemonInfo = {
+        indexName: 'test-index',
+        pid: 12345,
+        rootPath: testDir,
+        startedAt: '2024-01-01T00:00:00Z',
+        status: 'running' as const,
+      };
+
+      // Mock that index does NOT exist
+      vi.mocked(openDatabase).mockResolvedValue(mockDb as never);
+      vi.mocked(getIndex).mockResolvedValue(null);
+      vi.mocked(runIndexCommand).mockResolvedValue({
+        success: true,
+        indexName: 'test-index',
+        filesProcessed: 5,
+        chunksCreated: 10,
+      });
+      vi.mocked(DaemonManager.prototype.status).mockResolvedValue(null);
+      vi.mocked(DaemonManager.prototype.start).mockResolvedValue(mockDaemonInfo);
+
+      await runWatchCommand(testDir, { name: 'test-index' });
+
+      // Should check if index exists
+      expect(openDatabase).toHaveBeenCalled();
+      expect(getIndex).toHaveBeenCalledWith(mockDb, 'test-index');
+
+      // Should run indexing since index does NOT exist
+      expect(runIndexCommand).toHaveBeenCalledWith(testDir, {
+        name: 'test-index',
+        mode: 'create',
+        showProgress: true,
+      });
+
+      // Should start watcher
+      expect(DaemonManager.prototype.start).toHaveBeenCalled();
+    });
+
+    it('should close database connection after checking index', async () => {
+      const mockDb = { path: testDir, connection: {}, close: vi.fn() };
+      const mockDaemonInfo = {
+        indexName: 'test-index',
+        pid: 12345,
+        rootPath: testDir,
+        startedAt: '2024-01-01T00:00:00Z',
+        status: 'running' as const,
+      };
+
+      vi.mocked(openDatabase).mockResolvedValue(mockDb as never);
+      vi.mocked(getIndex).mockResolvedValue({
+        name: 'test-index',
+        metadata: {} as never,
+        table: null
+      });
+      vi.mocked(DaemonManager.prototype.status).mockResolvedValue(null);
+      vi.mocked(DaemonManager.prototype.start).mockResolvedValue(mockDaemonInfo);
+
+      await runWatchCommand(testDir, { name: 'test-index' });
+
+      // Should close database after check
+      expect(mockDb.close).toHaveBeenCalled();
     });
   });
 });

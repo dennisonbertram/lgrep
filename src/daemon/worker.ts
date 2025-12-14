@@ -6,6 +6,7 @@
  */
 
 import { watch, FSWatcher } from 'chokidar';
+import { ChangeDebouncer, triggerIncrementalIndex } from './worker-logic.js';
 
 // Get arguments
 const [, , indexName, rootPath] = process.argv;
@@ -17,6 +18,15 @@ if (!indexName || !rootPath) {
 
 let watcher: FSWatcher | null = null;
 let isShuttingDown = false;
+
+// Create debouncer for file changes (1.5 second delay)
+const debouncer = new ChangeDebouncer(1500, async (changedPaths: string[]) => {
+  try {
+    await triggerIncrementalIndex(indexName, rootPath, changedPaths);
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Failed to trigger incremental index:`, error);
+  }
+});
 
 // Log startup
 console.log(`[${new Date().toISOString()}] Worker started for index: ${indexName}`);
@@ -30,6 +40,14 @@ async function shutdown(signal: string): Promise<void> {
 
   isShuttingDown = true;
   console.log(`[${new Date().toISOString()}] Received ${signal}, shutting down gracefully...`);
+
+  // Flush any pending changes before shutting down
+  try {
+    await debouncer.flush();
+    console.log(`[${new Date().toISOString()}] Flushed pending changes`);
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error flushing changes:`, error);
+  }
 
   if (watcher) {
     await watcher.close();
@@ -75,17 +93,17 @@ try {
 
   watcher.on('add', (path) => {
     console.log(`[${new Date().toISOString()}] File added: ${path}`);
-    // TODO: Trigger incremental indexing
+    debouncer.addChange(path);
   });
 
   watcher.on('change', (path) => {
     console.log(`[${new Date().toISOString()}] File changed: ${path}`);
-    // TODO: Trigger incremental indexing
+    debouncer.addChange(path);
   });
 
   watcher.on('unlink', (path) => {
     console.log(`[${new Date().toISOString()}] File removed: ${path}`);
-    // TODO: Trigger incremental indexing (removal)
+    debouncer.addChange(path);
   });
 
   watcher.on('error', (error) => {
