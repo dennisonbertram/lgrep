@@ -1,0 +1,47 @@
+{
+  "name": "mgrep",
+  "version": "0.1.0",
+  "description": "Local semantic search CLI - privacy-first, mixedbread.ai quality without the cloud",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mgrep": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "type-check": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "keywords": [
+    "search",
+    "semantic-search",
+    "embeddings",
+    "ollama",
+    "local",
+    "cli",
+    "vector-search"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@lancedb/lancedb": "^0.13.0",
+    "ollama": "^0.5.11",
+    "commander": "^12.1.0",
+    "ora": "^8.1.1",
+    "chalk": "^5.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "tsup": "^8.3.5",
+    "@vitest/coverage-v8": "^2.1.8"
+  }
+}

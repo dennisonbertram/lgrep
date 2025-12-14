@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# LanceDB data
+db/
+cache/
+
+# OS files
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Test artifacts
+coverage/
+
+# Vitest cache
+.vite/
+
+# mgrep data directory (for testing)
+*.lancedb/
