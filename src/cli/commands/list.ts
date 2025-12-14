@@ -1,12 +1,14 @@
 import { openDatabase, listIndexes, type IndexHandle } from '../../storage/lance.js';
 import { getDbPath } from '../utils/paths.js';
+import { formatAsJson } from './json-formatter.js';
 
 /**
  * Run the list command.
  *
+ * @param json - Output as JSON if true
  * @returns Output string to display
  */
-export async function runListCommand(): Promise<string> {
+export async function runListCommand(json?: boolean): Promise<string> {
   const dbPath = getDbPath();
   const db = await openDatabase(dbPath);
 
@@ -14,10 +16,18 @@ export async function runListCommand(): Promise<string> {
     const indexes = await listIndexes(db);
 
     if (indexes.length === 0) {
-      return 'No indexes found. Use `mgrep index <path>` to create one.';
+      const message = 'No indexes found. Use `mgrep index <path>` to create one.';
+      if (json) {
+        return formatAsJson('list', '');
+      }
+      return message;
     }
 
-    return formatIndexList(indexes);
+    const textOutput = formatIndexList(indexes);
+    if (json) {
+      return formatAsJson('list', textOutput);
+    }
+    return textOutput;
   } finally {
     await db.close();
   }

@@ -1,5 +1,5 @@
 // Core exports
-export { chunkText, estimateTokens, type Chunk, type ChunkOptions } from './core/chunker.js';
+export { chunkText, chunkCode, estimateTokens, type Chunk, type ChunkOptions } from './core/chunker.js';
 export { createEmbeddingClient, type EmbeddingClient, type EmbeddingResult, type HealthCheckResult } from './core/embeddings.js';
 export { hashContent, hashFile, createCacheKey } from './core/hash.js';
 export { walkFiles, shouldExclude, isBinaryFile, DEFAULT_EXCLUDES, DEFAULT_SECRET_EXCLUDES, type WalkResult, type WalkOptions } from './core/walker.js';

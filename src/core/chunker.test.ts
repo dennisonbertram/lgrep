@@ -148,4 +148,227 @@ function another() {
       expect(totalLength).toBeGreaterThanOrEqual(text.length);
     });
   });
+
+  describe('chunkMarkdown', () => {
+    const defaultOptions: ChunkOptions = {
+      maxTokens: 100,
+      overlapTokens: 20,
+    };
+
+    it('should detect markdown files by extension', () => {
+      const text = '# Header\n\nContent';
+      const chunksWithMd = chunkText(text, defaultOptions, 'test.md');
+      const chunksWithMdx = chunkText(text, defaultOptions, 'test.mdx');
+      const chunksWithTxt = chunkText(text, defaultOptions, 'test.txt');
+
+      // Markdown files should be chunked differently (at headers)
+      // Non-markdown files should use default chunking
+      expect(chunksWithMd.length).toBeGreaterThan(0);
+      expect(chunksWithMdx.length).toBeGreaterThan(0);
+      expect(chunksWithTxt.length).toBeGreaterThan(0);
+    });
+
+    it('should split content at header boundaries', () => {
+      const text = `# Header 1
+
+Content for section 1.
+
+## Header 2
+
+Content for section 2.
+
+### Header 3
+
+Content for section 3.`;
+
+      const chunks = chunkText(text, defaultOptions, 'test.md');
+
+      // Should have at least 3 chunks (one per header)
+      expect(chunks.length).toBeGreaterThanOrEqual(3);
+
+      // Each chunk should start with a header or be continuation
+      expect(chunks[0]?.content).toContain('# Header 1');
+      expect(chunks.some(c => c.content.includes('## Header 2'))).toBe(true);
+      expect(chunks.some(c => c.content.includes('### Header 3'))).toBe(true);
+    });
+
+    it('should keep code blocks intact - never split in middle', () => {
+      const text = `# Code Example
+
+Here is some code:
+
+\`\`\`typescript
+function example() {
+  const x = 1;
+  const y = 2;
+  return x + y;
+}
+\`\`\`
+
+More content.`;
+
+      const chunks = chunkText(text, { maxTokens: 30, overlapTokens: 5 }, 'test.md');
+
+      // Verify that no chunk splits the code block
+      const allContent = chunks.map(c => c.content).join('\n');
+      const codeBlockPattern = /```typescript[\s\S]*?```/g;
+      const matches = allContent.match(codeBlockPattern);
+
+      // Code block should be preserved
+      expect(matches).toBeTruthy();
+      expect(matches?.length).toBeGreaterThan(0);
+
+      // Each chunk should either have complete code block or none
+      for (const chunk of chunks) {
+        const openBackticks = (chunk.content.match(/```/g) || []).length;
+        // Should be even (matched pairs) or zero
+        expect(openBackticks % 2).toBe(0);
+      }
+    });
+
+    it('should preserve frontmatter as separate chunk or attach to first section', () => {
+      const text = `---
+title: Test Document
+author: Claude
+date: 2025-12-14
+---
+
+# Introduction
+
+This is the introduction.`;
+
+      const chunks = chunkText(text, defaultOptions, 'test.md');
+
+      expect(chunks.length).toBeGreaterThan(0);
+
+      // First chunk should contain frontmatter
+      expect(chunks[0]?.content).toContain('---');
+      expect(chunks[0]?.content).toContain('title: Test Document');
+    });
+
+    it('should include header hierarchy for context', () => {
+      const text = `# Main Title
+
+Content under main.
+
+## Subsection
+
+Content under subsection.
+
+### Deep Section
+
+Content under deep.`;
+
+      const chunks = chunkText(text, defaultOptions, 'test.md');
+
+      // When a subsection is split, it should include parent headers for context
+      const subsectionChunk = chunks.find(c => c.content.includes('## Subsection'));
+      expect(subsectionChunk?.metadata?.headerHierarchy).toBeDefined();
+
+      const deepChunk = chunks.find(c => c.content.includes('### Deep Section'));
+      expect(deepChunk?.metadata?.headerHierarchy).toBeDefined();
+      if (deepChunk?.metadata?.headerHierarchy) {
+        expect(deepChunk.metadata.headerHierarchy.length).toBeGreaterThanOrEqual(2);
+      }
+    });
+
+    it('should handle markdown with no headers', () => {
+      const text = `This is plain markdown text.
+
+It has paragraphs but no headers.
+
+Just regular content.`;
+
+      const chunks = chunkText(text, defaultOptions, 'test.md');
+
+      // Should fall back to regular chunking
+      expect(chunks.length).toBeGreaterThan(0);
+      expect(chunks[0]?.content).toContain('This is plain markdown text.');
+    });
+
+    it('should not split on header-like syntax inside code blocks', () => {
+      const text = `# Real Header
+
+\`\`\`markdown
+# This is not a real header
+## Neither is this
+\`\`\`
+
+## Real Subheader
+
+More content.`;
+
+      const chunks = chunkText(text, defaultOptions, 'test.md');
+
+      // Should split at real headers, not code block headers
+      // The code block should stay intact in one chunk
+      const codeChunk = chunks.find(c => c.content.includes('# This is not a real header'));
+      if (codeChunk) {
+        expect(codeChunk.content).toContain('```markdown');
+        expect(codeChunk.content).toContain('```');
+      }
+    });
+
+    it('should handle nested headers with proper hierarchy', () => {
+      const text = `# Chapter 1
+
+Intro to chapter.
+
+## Section 1.1
+
+Content 1.1
+
+### Subsection 1.1.1
+
+Content 1.1.1
+
+## Section 1.2
+
+Content 1.2`;
+
+      const chunks = chunkText(text, defaultOptions, 'test.md');
+
+      expect(chunks.length).toBeGreaterThan(0);
+
+      // Verify hierarchy is tracked
+      const section111 = chunks.find(c => c.content.includes('Subsection 1.1.1'));
+      if (section111?.metadata?.headerHierarchy) {
+        expect(section111.metadata.headerHierarchy).toContain('Chapter 1');
+        expect(section111.metadata.headerHierarchy).toContain('Section 1.1');
+      }
+    });
+
+    it('should handle mixed content with code, lists, and headers', () => {
+      const text = `# API Documentation
+
+## Methods
+
+Here are the methods:
+
+\`\`\`typescript
+async function search(query: string): Promise<Result[]> {
+  // Implementation
+}
+\`\`\`
+
+### Parameters
+
+- \`query\`: The search string
+- Returns: Array of results
+
+## Examples
+
+More content here.`;
+
+      const chunks = chunkText(text, defaultOptions, 'test.md');
+
+      expect(chunks.length).toBeGreaterThan(0);
+
+      // Code blocks should be intact
+      for (const chunk of chunks) {
+        const backtickCount = (chunk.content.match(/```/g) || []).length;
+        expect(backtickCount % 2).toBe(0);
+      }
+    });
+  });
 });

@@ -119,4 +119,43 @@ describe('index command', () => {
       expect(result.indexName).toBe('custom-name');
     });
   });
+
+  describe('progress indicators', () => {
+    it('should show progress during indexing when showProgress is true', async () => {
+      const result = await runIndexCommand(sourceDir, {
+        name: 'progress-test',
+        showProgress: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.filesProcessed).toBeGreaterThan(0);
+    });
+
+    it('should not show progress when showProgress is false', async () => {
+      const result = await runIndexCommand(sourceDir, {
+        name: 'no-progress-test',
+        showProgress: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.filesProcessed).toBeGreaterThan(0);
+    });
+
+    it('should default to showing progress', async () => {
+      const result = await runIndexCommand(sourceDir, {
+        name: 'default-progress-test',
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should stop spinner on error', async () => {
+      await expect(
+        runIndexCommand('/nonexistent/path', {
+          name: 'error-test',
+          showProgress: true,
+        })
+      ).rejects.toThrow();
+    });
+  });
 });

@@ -1,4 +1,5 @@
 import { loadConfig, saveConfig, DEFAULT_CONFIG, type MgrepConfig } from '../../storage/config.js';
+import { formatAsJson } from './json-formatter.js';
 
 // Valid config keys that can be get/set
 const VALID_KEYS = Object.keys(DEFAULT_CONFIG) as (keyof MgrepConfig)[];
@@ -11,14 +12,19 @@ const NUMERIC_KEYS: (keyof MgrepConfig)[] = ['chunkSize', 'chunkOverlap', 'maxFi
  *
  * @param key - Optional config key to get or set
  * @param value - Optional value to set (requires key)
+ * @param json - Output as JSON if true
  * @returns Output string to display
  */
-export async function runConfigCommand(key?: string, value?: string): Promise<string> {
+export async function runConfigCommand(key?: string, value?: string, json?: boolean): Promise<string> {
   const config = await loadConfig();
 
   // Show all config
   if (!key) {
-    return formatConfig(config);
+    const textOutput = formatConfig(config);
+    if (json) {
+      return formatAsJson('config', textOutput);
+    }
+    return textOutput;
   }
 
   // Validate key
@@ -31,10 +37,12 @@ export async function runConfigCommand(key?: string, value?: string): Promise<st
   // Get single value
   if (value === undefined) {
     const val = config[typedKey];
-    if (Array.isArray(val)) {
-      return val.join(', ');
+    const textOutput = Array.isArray(val) ? val.join(', ') : String(val);
+    if (json) {
+      // For single value, return it as part of config object
+      return formatAsJson('config', `${key}: ${textOutput}`);
     }
-    return String(val);
+    return textOutput;
   }
 
   // Set value
@@ -42,7 +50,11 @@ export async function runConfigCommand(key?: string, value?: string): Promise<st
   const updatedConfig = { ...config, [typedKey]: parsedValue };
   await saveConfig(updatedConfig);
 
-  return `Set ${key} = ${formatValue(parsedValue)}`;
+  const textOutput = `Set ${key} = ${formatValue(parsedValue)}`;
+  if (json) {
+    return formatAsJson('config', `${key}: ${formatValue(parsedValue)}`);
+  }
+  return textOutput;
 }
 
 /**

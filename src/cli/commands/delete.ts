@@ -1,11 +1,13 @@
 import { openDatabase, getIndex, deleteIndex } from '../../storage/lance.js';
 import { getDbPath } from '../utils/paths.js';
+import { formatAsJson } from './json-formatter.js';
 
 /**
  * Options for the delete command.
  */
 export interface DeleteOptions {
   force?: boolean;
+  json?: boolean;
 }
 
 /**
@@ -35,7 +37,11 @@ export async function runDeleteCommand(
       throw new Error(`Failed to delete index "${name}"`);
     }
 
-    return `Deleted index "${name}"`;
+    const textOutput = `Deleted index "${name}"`;
+    if (options.json) {
+      return formatAsJson('delete', textOutput, { indexName: name });
+    }
+    return textOutput;
   } finally {
     await db.close();
   }

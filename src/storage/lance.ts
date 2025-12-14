@@ -379,3 +379,207 @@ export async function updateIndexStatus(
   await writeFile(metaPath, JSON.stringify(metadata, null, 2), 'utf-8');
   handle.metadata = metadata;
 }
+
+/**
+ * Get content hashes for all files in an index.
+ * Returns a Map of filePath -> contentHash.
+ * This is used for incremental indexing to detect which files have changed.
+ */
+export async function getFileContentHashes(
+  db: IndexDatabase,
+  handle: IndexHandle
+): Promise<Map<string, string>> {
+  const fullTableName = `${handle.name}_${TABLE_NAME}`;
+  const tableNames = await db.connection.tableNames();
+
+  if (!tableNames.includes(fullTableName)) {
+    return new Map();
+  }
+
+  const table = await db.connection.openTable(fullTableName);
+
+  // Query distinct file paths and their content hashes
+  // We use a simple approach: get all records and deduplicate in memory
+  const records = await table.query().select(['file_path', 'content_hash']).toArray();
+
+  const hashMap = new Map<string, string>();
+  for (const record of records) {
+    const filePath = record['file_path'] as string;
+    const contentHash = record['content_hash'] as string;
+
+    // Store the first hash we find for each file (all chunks from same file have same hash)
+    if (!hashMap.has(filePath)) {
+      hashMap.set(filePath, contentHash);
+    }
+  }
+
+  return hashMap;
+}
+
+/**
+ * Get all chunks for a specific file path.
+ * Returns chunks ordered by chunk index.
+ */
+export async function getChunksByFilePath(
+  db: IndexDatabase,
+  handle: IndexHandle,
+  filePath: string
+): Promise<DocumentChunk[]> {
+  const fullTableName = `${handle.name}_${TABLE_NAME}`;
+  const tableNames = await db.connection.tableNames();
+
+  if (!tableNames.includes(fullTableName)) {
+    return [];
+  }
+
+  const table = await db.connection.openTable(fullTableName);
+
+  // Query for all chunks matching this file path
+  const records = await table
+    .query()
+    .where(`file_path = '${filePath.replace(/'/g, "''")}'`)
+    .toArray();
+
+  // Convert records to chunks and sort by chunk index
+  const chunks = records.map((r: Record<string, unknown>) => recordToChunk(r));
+  chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+  return chunks;
+}
+
+/**
+ * Delete all chunks for a specific file path.
+ * Returns the number of chunks deleted.
+ */
+export async function deleteChunksByFilePath(
+  db: IndexDatabase,
+  handle: IndexHandle,
+  filePath: string
+): Promise<number> {
+  const fullTableName = `${handle.name}_${TABLE_NAME}`;
+  const tableNames = await db.connection.tableNames();
+
+  if (!tableNames.includes(fullTableName)) {
+    return 0;
+  }
+
+  const table = await db.connection.openTable(fullTableName);
+
+  // First, count how many chunks we're deleting
+  const existingChunks = await getChunksByFilePath(db, handle, filePath);
+  const deleteCount = existingChunks.length;
+
+  if (deleteCount === 0) {
+    return 0;
+  }
+
+  // Delete all chunks for this file path
+  await table.delete(`file_path = '${filePath.replace(/'/g, "''")}'`);
+
+  return deleteCount;
+}
+
+/**
+ * Calculate cosine similarity between two vectors.
+ * Returns a value between -1 and 1, where 1 means identical direction.
+ */
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  if (a.length !== b.length) {
+    throw new Error('Vectors must have the same length');
+  }
+
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    const aVal = a[i];
+    const bVal = b[i];
+    if (aVal !== undefined && bVal !== undefined) {
+      dotProduct += aVal * bVal;
+      normA += aVal * aVal;
+      normB += bVal * bVal;
+    }
+  }
+
+  const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+  if (denominator === 0) {
+    return 0;
+  }
+
+  return dotProduct / denominator;
+}
+
+/**
+ * Rerank search results using Maximal Marginal Relevance (MMR) algorithm.
+ *
+ * MMR = λ * sim(query, doc) - (1-λ) * max(sim(doc, selected_docs))
+ *
+ * @param results - Initial search results sorted by relevance
+ * @param queryVector - The query embedding vector
+ * @param lambda - Trade-off parameter between relevance (1.0) and diversity (0.0)
+ * @returns Reranked results with diversity considered
+ */
+export function rerankerWithMMR(
+  results: SearchResult[],
+  queryVector: Float32Array,
+  lambda: number
+): SearchResult[] {
+  // Edge cases
+  if (results.length === 0) {
+    return [];
+  }
+  if (results.length === 1) {
+    return results;
+  }
+
+  // Validate lambda
+  if (lambda < 0 || lambda > 1) {
+    throw new Error('Lambda must be between 0.0 and 1.0');
+  }
+
+  const selected: SearchResult[] = [];
+  const remaining = [...results];
+
+  // First result is always the most relevant
+  selected.push(remaining.shift()!);
+
+  // Iteratively select remaining results
+  while (remaining.length > 0) {
+    let bestIdx = 0;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const candidate = remaining[i];
+      if (!candidate) continue;
+
+      // Calculate relevance to query (convert distance to similarity)
+      // LanceDB returns cosine distance, where smaller is better
+      // Similarity = 1 - distance
+      const queryRelevance = 1 - candidate._score;
+
+      // Calculate maximum similarity to already selected documents
+      let maxSelectedSimilarity = 0;
+      for (const selectedDoc of selected) {
+        const similarity = cosineSimilarity(candidate.vector, selectedDoc.vector);
+        maxSelectedSimilarity = Math.max(maxSelectedSimilarity, similarity);
+      }
+
+      // MMR score
+      const mmrScore = lambda * queryRelevance - (1 - lambda) * maxSelectedSimilarity;
+
+      if (mmrScore > bestScore) {
+        bestScore = mmrScore;
+        bestIdx = i;
+      }
+    }
+
+    // Add the best candidate to selected and remove from remaining
+    const bestCandidate = remaining.splice(bestIdx, 1)[0];
+    if (bestCandidate) {
+      selected.push(bestCandidate);
+    }
+  }
+
+  return selected;
+}

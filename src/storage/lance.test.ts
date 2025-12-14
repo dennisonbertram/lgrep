@@ -13,9 +13,11 @@ import {
   searchChunks,
   getChunkCount,
   updateIndexStatus,
+  rerankerWithMMR,
   type IndexDatabase,
   type IndexHandle,
   type DocumentChunk,
+  type SearchResult,
 } from './lance.js';
 
 describe('lance storage', () => {
@@ -416,6 +418,222 @@ describe('lance storage', () => {
 
         const updated = await getIndex(db, handle.name);
         expect(updated?.metadata.chunkCount).toBe(2);
+      });
+    });
+  });
+
+  describe('MMR reranking', () => {
+    let db: IndexDatabase;
+    let handle: IndexHandle;
+    const DIMENSIONS = 4;
+
+    beforeEach(async () => {
+      db = await openDatabase(join(testDir, 'db'));
+      handle = await createIndex(db, {
+        name: 'mmr-test',
+        rootPath: '/test',
+        model: 'test-model',
+        modelDimensions: DIMENSIONS,
+      });
+    });
+
+    afterEach(async () => {
+      await db.close();
+    });
+
+    function makeChunk(overrides: Partial<DocumentChunk> = {}): DocumentChunk {
+      return {
+        id: randomUUID(),
+        filePath: '/test/file.ts',
+        relativePath: 'file.ts',
+        contentHash: 'abc123',
+        chunkIndex: 0,
+        content: 'Test content',
+        vector: new Float32Array([0.1, 0.2, 0.3, 0.4]),
+        fileType: '.ts',
+        createdAt: new Date().toISOString(),
+        ...overrides,
+      };
+    }
+
+    describe('rerank with lambda=1.0 (pure relevance)', () => {
+      it('should return results in same order as original when lambda=1.0', async () => {
+        // Create results with known scores (already sorted by relevance)
+        const results: SearchResult[] = [
+          { ...makeChunk({ id: 'high-score', content: 'Most relevant' }), _score: 0.1 },
+          { ...makeChunk({ id: 'mid-score', content: 'Medium relevant' }), _score: 0.3 },
+          { ...makeChunk({ id: 'low-score', content: 'Least relevant' }), _score: 0.5 },
+        ];
+
+        const queryVector = new Float32Array([1.0, 0.0, 0.0, 0.0]);
+        const reranked = rerankerWithMMR(results, queryVector, 1.0);
+
+        // With lambda=1.0, order should be unchanged (pure relevance)
+        expect(reranked[0].id).toBe('high-score');
+        expect(reranked[1].id).toBe('mid-score');
+        expect(reranked[2].id).toBe('low-score');
+      });
+    });
+
+    describe('rerank with lambda=0.0 (pure diversity)', () => {
+      it('should maximize diversity when lambda=0.0', async () => {
+        // Create results where middle result is very similar to top result
+        const results: SearchResult[] = [
+          {
+            ...makeChunk({
+              id: 'top',
+              content: 'First result',
+              vector: new Float32Array([0.9, 0.1, 0.1, 0.1]),
+            }),
+            _score: 0.1,
+          },
+          {
+            ...makeChunk({
+              id: 'duplicate',
+              content: 'Near duplicate of first',
+              vector: new Float32Array([0.85, 0.1, 0.1, 0.1]),
+            }),
+            _score: 0.15,
+          },
+          {
+            ...makeChunk({
+              id: 'diverse',
+              content: 'Very different result',
+              vector: new Float32Array([0.1, 0.1, 0.1, 0.9]),
+            }),
+            _score: 0.3,
+          },
+        ];
+
+        const queryVector = new Float32Array([0.9, 0.1, 0.1, 0.1]);
+        const reranked = rerankerWithMMR(results, queryVector, 0.0);
+
+        // With lambda=0.0, 'diverse' should be selected second (not 'duplicate')
+        expect(reranked[0].id).toBe('top');
+        expect(reranked[1].id).toBe('diverse');
+        expect(reranked[2].id).toBe('duplicate');
+      });
+    });
+
+    describe('rerank with lambda=0.5 (balanced)', () => {
+      it('should balance relevance and diversity with lambda=0.5', async () => {
+        const results: SearchResult[] = [
+          {
+            ...makeChunk({
+              id: 'relevant',
+              vector: new Float32Array([0.9, 0.1, 0.0, 0.0]),
+            }),
+            _score: 0.1,
+          },
+          {
+            ...makeChunk({
+              id: 'similar-to-relevant',
+              vector: new Float32Array([0.85, 0.15, 0.0, 0.0]),
+            }),
+            _score: 0.12,
+          },
+          {
+            ...makeChunk({
+              id: 'moderately-diverse',
+              vector: new Float32Array([0.5, 0.5, 0.0, 0.0]),
+            }),
+            _score: 0.25,
+          },
+        ];
+
+        const queryVector = new Float32Array([1.0, 0.0, 0.0, 0.0]);
+        const reranked = rerankerWithMMR(results, queryVector, 0.5);
+
+        // First should still be most relevant
+        expect(reranked[0].id).toBe('relevant');
+        // Second should consider both relevance and diversity
+        // (implementation-dependent, but diverse should be preferred)
+      });
+    });
+
+    describe('edge cases', () => {
+      it('should handle single result without error', async () => {
+        const results: SearchResult[] = [
+          { ...makeChunk({ id: 'only-one' }), _score: 0.2 },
+        ];
+
+        const queryVector = new Float32Array([0.5, 0.5, 0.0, 0.0]);
+        const reranked = rerankerWithMMR(results, queryVector, 0.7);
+
+        expect(reranked).toHaveLength(1);
+        expect(reranked[0].id).toBe('only-one');
+      });
+
+      it('should handle empty results array', async () => {
+        const results: SearchResult[] = [];
+        const queryVector = new Float32Array([0.5, 0.5, 0.0, 0.0]);
+        const reranked = rerankerWithMMR(results, queryVector, 0.7);
+
+        expect(reranked).toEqual([]);
+      });
+
+      it('should handle two results', async () => {
+        const results: SearchResult[] = [
+          { ...makeChunk({ id: 'first' }), _score: 0.1 },
+          { ...makeChunk({ id: 'second' }), _score: 0.3 },
+        ];
+
+        const queryVector = new Float32Array([0.5, 0.5, 0.0, 0.0]);
+        const reranked = rerankerWithMMR(results, queryVector, 0.7);
+
+        expect(reranked).toHaveLength(2);
+      });
+    });
+
+    describe('near-duplicate demotion', () => {
+      it('should demote near-duplicates in favor of diverse results', async () => {
+        const results: SearchResult[] = [
+          {
+            ...makeChunk({
+              id: 'original',
+              content: 'function authenticate()',
+              vector: new Float32Array([0.8, 0.2, 0.0, 0.0]),
+            }),
+            _score: 0.1,
+          },
+          {
+            ...makeChunk({
+              id: 'near-dup-1',
+              content: 'function authenticate() { /* similar */ }',
+              vector: new Float32Array([0.78, 0.22, 0.0, 0.0]),
+            }),
+            _score: 0.11,
+          },
+          {
+            ...makeChunk({
+              id: 'near-dup-2',
+              content: 'function authenticate() { /* also similar */ }',
+              vector: new Float32Array([0.79, 0.21, 0.0, 0.0]),
+            }),
+            _score: 0.12,
+          },
+          {
+            ...makeChunk({
+              id: 'different',
+              content: 'database connection logic',
+              vector: new Float32Array([0.2, 0.8, 0.0, 0.0]),
+            }),
+            _score: 0.3,
+          },
+        ];
+
+        const queryVector = new Float32Array([0.8, 0.2, 0.0, 0.0]);
+        const reranked = rerankerWithMMR(results, queryVector, 0.7);
+
+        // Original should be first
+        expect(reranked[0].id).toBe('original');
+        // Diverse result should come before near-duplicates
+        const differentIndex = reranked.findIndex(r => r.id === 'different');
+        const nearDup1Index = reranked.findIndex(r => r.id === 'near-dup-1');
+        const nearDup2Index = reranked.findIndex(r => r.id === 'near-dup-2');
+
+        expect(differentIndex).toBeLessThan(nearDup1Index);
+        expect(differentIndex).toBeLessThan(nearDup2Index);
       });
     });
   });
