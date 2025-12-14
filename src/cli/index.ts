@@ -6,6 +6,8 @@ import { runIndexCommand } from './commands/index.js';
 import { runSearchCommand } from './commands/search.js';
 import { runAnalyzeCommand } from './commands/analyze.js';
 import { formatAsJson } from './commands/json-formatter.js';
+import { openDatabase, deleteIndex } from '../storage/lance.js';
+import { getDbPath } from './utils/paths.js';
 
 const program = new Command();
 
@@ -19,16 +21,61 @@ program
   .command('index <path>')
   .description('Index files in a directory for semantic search')
   .option('-n, --name <name>', 'Name for the index')
+  .option('-u, --update', 'Update existing index incrementally (skip unchanged files)')
+  .option('-f, --force', 'Delete and recreate index if it exists')
   .option('-j, --json', 'Output as JSON')
-  .action(async (path: string, options: { name?: string; json?: boolean }) => {
+  .action(async (path: string, options: { name?: string; update?: boolean; force?: boolean; json?: boolean }) => {
     try {
-      if (!options.json) {
-        console.log(`Indexing ${path}...`);
+      // Validate flag conflicts
+      if (options.update && options.force) {
+        throw new Error('Cannot use both --update and --force flags together');
       }
-      const result = await runIndexCommand(path, { name: options.name, json: options.json });
+
+      // Handle --force flag: delete existing index first
+      if (options.force && options.name) {
+        const dbPath = getDbPath();
+        const db = await openDatabase(dbPath);
+        try {
+          await deleteIndex(db, options.name);
+        } finally {
+          await db.close();
+        }
+      }
+
+      if (!options.json && !options.update) {
+        console.log(`Indexing ${path}...`);
+      } else if (!options.json && options.update) {
+        console.log(`Updating index for ${path}...`);
+      }
+
+      const result = await runIndexCommand(path, {
+        name: options.name,
+        mode: options.update ? 'update' : 'create',
+        json: options.json,
+        showProgress: !options.json,
+      });
+
       if (options.json) {
         console.log(formatAsJson('index', result));
+      } else if (options.update) {
+        // Update mode output
+        const changes: string[] = [];
+        if (result.filesSkipped && result.filesSkipped > 0) {
+          changes.push(`${result.filesSkipped} unchanged`);
+        }
+        if (result.filesUpdated && result.filesUpdated > 0) {
+          changes.push(`${result.filesUpdated} updated`);
+        }
+        if (result.filesAdded && result.filesAdded > 0) {
+          changes.push(`${result.filesAdded} added`);
+        }
+        if (result.filesDeleted && result.filesDeleted > 0) {
+          changes.push(`${result.filesDeleted} deleted`);
+        }
+
+        console.log(`Updated "${result.indexName}": ${changes.join(', ')} (${result.chunksCreated} new chunks)`);
       } else {
+        // Create mode output
         console.log(`Created index "${result.indexName}"`);
         console.log(`  Files processed: ${result.filesProcessed}`);
         console.log(`  Chunks created: ${result.chunksCreated}`);

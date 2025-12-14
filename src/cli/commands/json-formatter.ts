@@ -68,6 +68,9 @@ export type JsonSearchOutput = JsonSemanticSearchOutput | JsonUsagesOutput | Jso
 export interface JsonIndexOutput {
   indexed: number;
   skipped: number;
+  updated?: number;
+  added?: number;
+  deleted?: number;
   errors: string[];
   duration_ms: number;
 }
@@ -224,12 +227,25 @@ function formatSearchJson(result: SearchCommandResult): JsonSearchOutput {
  * Format index results as JSON
  */
 function formatIndexJson(result: IndexResult): JsonIndexOutput {
-  return {
+  const output: JsonIndexOutput = {
     indexed: result.filesProcessed,
-    skipped: 0, // Not tracked currently
-    errors: [], // Not tracked currently
+    skipped: result.filesSkipped ?? 0,
+    errors: result.error ? [result.error] : [],
     duration_ms: 0, // Not tracked currently
   };
+
+  // Include incremental stats if present
+  if (result.filesUpdated !== undefined) {
+    output.updated = result.filesUpdated;
+  }
+  if (result.filesAdded !== undefined) {
+    output.added = result.filesAdded;
+  }
+  if (result.filesDeleted !== undefined) {
+    output.deleted = result.filesDeleted;
+  }
+
+  return output;
 }
 
 /**

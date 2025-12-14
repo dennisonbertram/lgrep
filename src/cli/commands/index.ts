@@ -1,4 +1,4 @@
-import { basename, resolve } from 'node:path';
+import { basename, resolve, extname } from 'node:path';
 import { access, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { walkFiles, type WalkResult } from '../../core/walker.js';
@@ -23,6 +23,15 @@ import {
 } from '../../storage/cache.js';
 import { getDbPath, getCachePath } from '../utils/paths.js';
 import { createSpinner } from '../utils/progress.js';
+import { extractSymbols } from '../../core/ast/symbol-extractor.js';
+import { extractDependencies } from '../../core/ast/dependency-extractor.js';
+import { extractCalls } from '../../core/ast/call-extractor.js';
+import {
+  addSymbols,
+  addDependencies,
+  addCalls,
+} from '../../storage/code-intel.js';
+import type { CodeSymbol, CodeDependency, CallEdge } from '../../types/code-intel.js';
 
 /**
  * Options for the index command.
@@ -46,6 +55,9 @@ export interface IndexResult {
   filesUpdated?: number;
   filesAdded?: number;
   filesDeleted?: number;
+  symbolsIndexed?: number;
+  dependenciesIndexed?: number;
+  callsIndexed?: number;
   error?: string;
 }
 
@@ -135,6 +147,9 @@ export async function runIndexCommand(
       let filesSkipped = 0;
       let filesUpdated = 0;
       let filesAdded = 0;
+      let totalSymbols = 0;
+      let totalDependencies = 0;
+      let totalCalls = 0;
 
       // Build set of current file paths for deletion detection
       const currentFilePaths = new Set(files.map(f => f.absolutePath));
@@ -182,6 +197,38 @@ export async function runIndexCommand(
           await addChunks(db, handle, chunks);
           totalChunks += chunks.length;
         }
+
+        // Extract code intelligence for JS/TS files
+        const CODE_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx'];
+        if (CODE_EXTENSIONS.includes(file.extension)) {
+          try {
+            // Extract symbols
+            const rawSymbols = extractSymbols(
+              content,
+              file.absolutePath,
+              file.relativePath,
+              file.extension
+            );
+            const symbols = convertSymbols(rawSymbols, file.absolutePath, file.relativePath);
+            await addSymbols(db, indexName, symbols);
+            totalSymbols += symbols.length;
+
+            // Extract dependencies
+            const rawDeps = extractDependencies(content, file.absolutePath);
+            const deps = convertDependencies(rawDeps, file.absolutePath);
+            await addDependencies(db, indexName, deps);
+            totalDependencies += deps.length;
+
+            // Extract calls
+            const rawCalls = extractCalls(content, file.absolutePath);
+            const calls = convertCalls(rawCalls, file.absolutePath, file.relativePath);
+            await addCalls(db, indexName, calls);
+            totalCalls += calls.length;
+          } catch (error) {
+            // Gracefully handle code intelligence extraction errors
+            // Don't fail the entire indexing if AST parsing fails
+          }
+        }
       }
 
       // Handle deleted files in update mode
@@ -226,6 +273,9 @@ export async function runIndexCommand(
         filesUpdated: mode === 'update' ? filesUpdated : undefined,
         filesAdded: mode === 'update' ? filesAdded : undefined,
         filesDeleted: mode === 'update' ? filesDeleted : undefined,
+        symbolsIndexed: totalSymbols,
+        dependenciesIndexed: totalDependencies,
+        callsIndexed: totalCalls,
       };
     } catch (err) {
       throw err;
@@ -237,6 +287,179 @@ export async function runIndexCommand(
     spinner?.fail('Indexing failed');
     throw err;
   }
+}
+
+/**
+ * Convert symbol extractor output to storage format
+ */
+function convertSymbols(
+  rawSymbols: Array<{
+    id: string;
+    name: string;
+    kind: string;
+    filePath: string;
+    relativePath: string;
+    lineStart: number;
+    lineEnd: number;
+    columnStart: number;
+    columnEnd: number;
+    isExported: boolean;
+    isDefaultExport: boolean;
+    signature?: string;
+    documentation?: string;
+    parentId?: string;
+    modifiers: string[];
+  }>,
+  filePath: string,
+  relativePath: string
+): CodeSymbol[] {
+  return rawSymbols.map(sym => ({
+    id: sym.id,
+    name: sym.name,
+    kind: sym.kind as CodeSymbol['kind'],
+    filePath,
+    relativePath,
+    range: {
+      start: {
+        line: sym.lineStart,
+        column: sym.columnStart,
+      },
+      end: {
+        line: sym.lineEnd,
+        column: sym.columnEnd,
+      },
+    },
+    isExported: sym.isExported,
+    isDefaultExport: sym.isDefaultExport,
+    signature: sym.signature,
+    documentation: sym.documentation,
+    parentId: sym.parentId,
+    modifiers: sym.modifiers,
+  }));
+}
+
+/**
+ * Convert dependency extractor output to storage format
+ */
+function convertDependencies(
+  rawDeps: Array<{
+    type: string;
+    source?: string;
+    isExternal: boolean;
+    line?: number;
+    column?: number;
+    imported?: Array<{ name: string; alias?: string; isType?: boolean }>;
+    default?: string;
+    namespace?: string;
+    exported?: Array<{ name: string; alias?: string }>;
+  }>,
+  sourceFile: string
+): CodeDependency[] {
+  return rawDeps.map((dep, index) => {
+    const id = `${sourceFile}:${dep.source || 'export'}:${dep.line || index}`;
+
+    // Map type to DependencyKind
+    let kind: CodeDependency['kind'];
+    switch (dep.type) {
+      case 'import':
+        kind = 'import';
+        break;
+      case 'dynamic-import':
+        kind = 'dynamic-import';
+        break;
+      case 'require':
+        kind = 'require';
+        break;
+      case 'export':
+      case 'export-default':
+      case 'export-all':
+        kind = 'export-from';
+        break;
+      default:
+        kind = 'import';
+    }
+
+    // Convert imported/exported names
+    const names: CodeDependency['names'] = [];
+
+    if (dep.default) {
+      names.push({ name: dep.default, alias: undefined });
+    }
+
+    if (dep.namespace) {
+      names.push({ name: dep.namespace, alias: undefined });
+    }
+
+    if (dep.imported) {
+      for (const imp of dep.imported) {
+        names.push({
+          name: imp.name,
+          alias: imp.alias,
+        });
+      }
+    }
+
+    if (dep.exported) {
+      for (const exp of dep.exported) {
+        names.push({
+          name: exp.name,
+          alias: exp.alias,
+        });
+      }
+    }
+
+    return {
+      id,
+      sourceFile,
+      targetModule: dep.source || '',
+      resolvedPath: undefined,
+      kind,
+      names,
+      line: dep.line || 0,
+      isExternal: dep.isExternal,
+    };
+  });
+}
+
+/**
+ * Convert call extractor output to storage format
+ */
+function convertCalls(
+  rawCalls: Array<{
+    callee: string;
+    caller: string | null;
+    receiver?: string;
+    type: string;
+    line?: number;
+    column?: number;
+    argumentCount: number;
+  }>,
+  filePath: string,
+  relativePath: string
+): CallEdge[] {
+  return rawCalls.map(call => {
+    const callerId = call.caller
+      ? `${relativePath}:${call.caller}:function`
+      : `${relativePath}:__top_level__:function`;
+
+    const id = `${callerId}->${call.callee}:${call.line || 0}`;
+
+    return {
+      id,
+      callerId,
+      callerFile: filePath,
+      calleeName: call.callee,
+      calleeId: undefined,
+      calleeFile: undefined,
+      position: {
+        line: call.line || 0,
+        column: call.column || 0,
+      },
+      isMethodCall: call.type === 'method',
+      receiver: call.receiver,
+      argumentCount: call.argumentCount,
+    };
+  });
 }
 
 /**

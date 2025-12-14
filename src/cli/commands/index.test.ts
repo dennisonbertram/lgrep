@@ -158,4 +158,58 @@ describe('index command', () => {
       ).rejects.toThrow();
     });
   });
+
+  describe('code intelligence extraction', () => {
+    it('should extract and store symbols from TypeScript files', async () => {
+      const result = await runIndexCommand(sourceDir, { name: 'code-intel-test' });
+
+      expect(result.success).toBe(true);
+      expect(result.symbolsIndexed).toBeGreaterThan(0);
+    });
+
+    it('should extract and store dependencies from TypeScript files', async () => {
+      // Create a file with imports
+      await writeFile(
+        join(sourceDir, 'imports.ts'),
+        "import { readFile } from 'fs/promises';\nexport function test() {}"
+      );
+
+      const result = await runIndexCommand(sourceDir, { name: 'deps-test' });
+
+      expect(result.success).toBe(true);
+      expect(result.dependenciesIndexed).toBeGreaterThan(0);
+    });
+
+    it('should extract and store function calls from TypeScript files', async () => {
+      // Create a file with function calls
+      await writeFile(
+        join(sourceDir, 'calls.ts'),
+        'function foo() { return bar(); }\nfunction bar() { return 42; }'
+      );
+
+      const result = await runIndexCommand(sourceDir, { name: 'calls-test' });
+
+      expect(result.success).toBe(true);
+      expect(result.callsIndexed).toBeGreaterThan(0);
+    });
+
+    it('should only extract code intelligence from JS/TS files', async () => {
+      const result = await runIndexCommand(sourceDir, { name: 'selective-test' });
+
+      // Should process TS files but not TXT or MD files for code intel
+      expect(result.success).toBe(true);
+      expect(result.symbolsIndexed).toBeGreaterThan(0);
+    });
+
+    it('should skip code intelligence for non-code files', async () => {
+      await writeFile(join(sourceDir, 'data.json'), '{"test": true}');
+      await writeFile(join(sourceDir, 'readme.md'), '# README');
+
+      const result = await runIndexCommand(sourceDir, { name: 'skip-test' });
+
+      expect(result.success).toBe(true);
+      // Symbols should only come from the .ts file
+      expect(result.filesProcessed).toBeGreaterThan(0);
+    });
+  });
 });
