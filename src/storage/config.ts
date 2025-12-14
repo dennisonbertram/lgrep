@@ -18,6 +18,18 @@ export interface MgrepConfig {
   excludes: string[];
   /** Patterns for secret files to exclude */
   secretExcludes: string[];
+  /** Model to use for code summarization */
+  summarizationModel: string;
+  /** Whether to enable automatic code summarization */
+  enableSummarization: boolean;
+  /** Maximum length of generated summaries in characters */
+  maxSummaryLength: number;
+  /** Maximum tokens in context package */
+  contextMaxTokens: number;
+  /** Maximum graph traversal depth for context building */
+  contextGraphDepth: number;
+  /** Maximum number of files to include in context */
+  contextFileLimit: number;
 }
 
 /**
@@ -57,6 +69,12 @@ export const DEFAULT_CONFIG: MgrepConfig = {
     '.npmrc',
     '.pypirc',
   ],
+  summarizationModel: 'llama3.2:3b',
+  enableSummarization: true,
+  maxSummaryLength: 100,
+  contextMaxTokens: 32000,
+  contextGraphDepth: 2,
+  contextFileLimit: 15,
 };
 
 /**

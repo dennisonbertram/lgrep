@@ -28,6 +28,9 @@ export async function addSymbols(
     signature: symbol.signature ?? '',
     parent_id: symbol.parentId ?? '',
     modifiers: JSON.stringify(symbol.modifiers),
+    summary: symbol.summary ?? '',
+    summary_model: symbol.summaryModel ?? '',
+    summary_generated_at: symbol.summaryGeneratedAt ?? '',
     index_name: indexName,
     created_at: new Date().toISOString(),
   }));
@@ -85,6 +88,9 @@ export async function getSymbols(
       signature: record['signature'] as string || undefined,
       parentId: record['parent_id'] as string || undefined,
       modifiers: JSON.parse(record['modifiers'] as string) as string[],
+      summary: record['summary'] as string || undefined,
+      summaryModel: record['summary_model'] as string || undefined,
+      summaryGeneratedAt: record['summary_generated_at'] as string || undefined,
     }));
   } catch {
     return [];
@@ -133,6 +139,9 @@ export async function searchSymbols(
       signature: record['signature'] as string || undefined,
       parentId: record['parent_id'] as string || undefined,
       modifiers: JSON.parse(record['modifiers'] as string) as string[],
+      summary: record['summary'] as string || undefined,
+      summaryModel: record['summary_model'] as string || undefined,
+      summaryGeneratedAt: record['summary_generated_at'] as string || undefined,
     }));
   } catch {
     return [];
@@ -437,4 +446,97 @@ export async function getCodeIntelStats(
     dependencies: dependencies.length,
     calls: calls.length,
   };
+}
+
+/**
+ * Update the summary for a specific symbol.
+ */
+export async function updateSymbolSummary(
+  db: IndexDatabase,
+  indexName: string,
+  symbolId: string,
+  summary: string,
+  model: string
+): Promise<void> {
+  const tableName = `${indexName}_symbols`;
+
+  try {
+    const table = await db.connection.openTable(tableName);
+
+    // Get the current symbol
+    const results = await table.query().where(`id = '${symbolId}'`).toArray();
+
+    if (results.length === 0) {
+      throw new Error(`Symbol with id ${symbolId} not found`);
+    }
+
+    // Delete the old record
+    await table.delete(`id = '${symbolId}'`);
+
+    // Add updated record with summary
+    const record = results[0] as Record<string, unknown>;
+    const updatedRecord = {
+      ...record,
+      summary,
+      summary_model: model,
+      summary_generated_at: new Date().toISOString(),
+    };
+
+    await table.add([updatedRecord]);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('not found')) {
+      throw error;
+    }
+    throw new Error(`Failed to update symbol summary: ${error}`);
+  }
+}
+
+/**
+ * Get symbols that do not have summaries yet.
+ */
+export async function getSymbolsWithoutSummaries(
+  db: IndexDatabase,
+  indexName: string
+): Promise<CodeSymbol[]> {
+  const tableName = `${indexName}_symbols`;
+
+  try {
+    const table = await db.connection.openTable(tableName);
+    const results = await table.query().toArray();
+
+    // Filter for symbols without summaries
+    const unsummarized = results.filter((record: Record<string, unknown>) => {
+      const summary = record['summary'] as string;
+      return !summary || summary === '';
+    });
+
+    return unsummarized.map((record: Record<string, unknown>) => ({
+      id: record['id'] as string,
+      name: record['name'] as string,
+      kind: record['kind'] as SymbolKind,
+      filePath: record['file_path'] as string,
+      relativePath: record['relative_path'] as string,
+      range: {
+        start: {
+          line: record['line_start'] as number,
+          column: record['column_start'] as number,
+        },
+        end: {
+          line: record['line_end'] as number,
+          column: record['column_end'] as number,
+        },
+      },
+      isExported: (record['is_exported'] as number) === 1,
+      isDefaultExport: (record['is_default_export'] as number) === 1,
+      documentation: record['documentation'] as string || undefined,
+      signature: record['signature'] as string || undefined,
+      parentId: record['parent_id'] as string || undefined,
+      modifiers: JSON.parse(record['modifiers'] as string) as string[],
+      summary: record['summary'] as string || undefined,
+      summaryModel: record['summary_model'] as string || undefined,
+      summaryGeneratedAt: record['summary_generated_at'] as string || undefined,
+    }));
+  } catch {
+    return [];
+  }
 }

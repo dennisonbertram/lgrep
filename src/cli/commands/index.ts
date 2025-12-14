@@ -30,8 +30,10 @@ import {
   addSymbols,
   addDependencies,
   addCalls,
+  updateSymbolSummary,
 } from '../../storage/code-intel.js';
 import type { CodeSymbol, CodeDependency, CallEdge } from '../../types/code-intel.js';
+import { createSummarizerClient } from '../../core/summarizer.js';
 
 /**
  * Options for the index command.
@@ -41,6 +43,8 @@ export interface IndexOptions {
   showProgress?: boolean;
   mode?: 'create' | 'update';
   json?: boolean;
+  summarize?: boolean;     // Default: true
+  resummarize?: boolean;   // Default: false
 }
 
 /**
@@ -58,6 +62,8 @@ export interface IndexResult {
   symbolsIndexed?: number;
   dependenciesIndexed?: number;
   callsIndexed?: number;
+  symbolsSummarized?: number;
+  summarizationSkipped?: boolean;
   error?: string;
 }
 
@@ -150,6 +156,10 @@ export async function runIndexCommand(
       let totalSymbols = 0;
       let totalDependencies = 0;
       let totalCalls = 0;
+      let totalSymbolsSummarized = 0;
+
+      // Store symbols for later summarization
+      const allExtractedSymbols: Array<{ symbol: CodeSymbol; content: string }> = [];
 
       // Build set of current file paths for deletion detection
       const currentFilePaths = new Set(files.map(f => f.absolutePath));
@@ -213,6 +223,11 @@ export async function runIndexCommand(
             await addSymbols(db, indexName, symbols);
             totalSymbols += symbols.length;
 
+            // Store symbols with their content for later summarization
+            for (const symbol of symbols) {
+              allExtractedSymbols.push({ symbol, content });
+            }
+
             // Extract dependencies
             const rawDeps = extractDependencies(content, file.absolutePath);
             const deps = convertDependencies(rawDeps, file.absolutePath);
@@ -239,6 +254,61 @@ export async function runIndexCommand(
             // File was deleted - remove its chunks
             await deleteChunksByFilePath(db, handle, existingPath);
             filesDeleted++;
+          }
+        }
+      }
+
+      // Summarize symbols if enabled
+      let summarizationSkipped = false;
+      if (options.summarize !== false && allExtractedSymbols.length > 0) {
+        spinner?.update('Summarizing symbols...');
+
+        const summarizer = createSummarizerClient({
+          model: config.summarizationModel,
+        });
+
+        // Check if summarizer is available
+        const health = await summarizer.healthCheck();
+        if (!health.healthy || !health.modelAvailable) {
+          if (showProgress && !options.json) {
+            console.warn('⚠ Summarization skipped: Ollama not available');
+          }
+          summarizationSkipped = true;
+        } else {
+          for (const { symbol, content } of allExtractedSymbols) {
+            // Skip if already has summary (unless resummarize)
+            if (symbol.summary && !options.resummarize) continue;
+
+            // Skip symbols without meaningful code (imports, exports)
+            if (symbol.kind === 'import' || symbol.kind === 'export') continue;
+
+            try {
+              // Get the code for this symbol from the file
+              const code = getSymbolCode(content, symbol);
+
+              const summary = await summarizer.summarizeSymbol({
+                name: symbol.name,
+                kind: symbol.kind,
+                signature: symbol.signature,
+                code,
+                documentation: symbol.documentation,
+              });
+
+              await updateSymbolSummary(
+                db,
+                indexName,
+                symbol.id,
+                summary,
+                config.summarizationModel
+              );
+
+              totalSymbolsSummarized++;
+            } catch (error) {
+              // Log but don't fail indexing
+              if (showProgress && !options.json) {
+                console.warn(`⚠ Failed to summarize ${symbol.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+              }
+            }
           }
         }
       }
@@ -276,6 +346,8 @@ export async function runIndexCommand(
         symbolsIndexed: totalSymbols,
         dependenciesIndexed: totalDependencies,
         callsIndexed: totalCalls,
+        symbolsSummarized: totalSymbolsSummarized > 0 ? totalSymbolsSummarized : undefined,
+        summarizationSkipped: summarizationSkipped ? true : undefined,
       };
     } catch (err) {
       throw err;
@@ -460,6 +532,20 @@ function convertCalls(
       argumentCount: call.argumentCount,
     };
   });
+}
+
+/**
+ * Get the code for a symbol from file content.
+ */
+function getSymbolCode(
+  content: string,
+  symbol: CodeSymbol
+): string {
+  const lines = content.split('\n');
+  const startLine = symbol.range?.start?.line ?? 0;
+  const endLine = symbol.range?.end?.line ?? startLine + 10;
+
+  return lines.slice(startLine, endLine + 1).join('\n');
 }
 
 /**

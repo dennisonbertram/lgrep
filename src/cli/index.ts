@@ -5,7 +5,8 @@ import { runDeleteCommand } from './commands/delete.js';
 import { runIndexCommand } from './commands/index.js';
 import { runSearchCommand } from './commands/search.js';
 import { runAnalyzeCommand } from './commands/analyze.js';
-import { formatAsJson } from './commands/json-formatter.js';
+import { runContextCommand } from './commands/context.js';
+import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { openDatabase, deleteIndex } from '../storage/lance.js';
 import { getDbPath } from './utils/paths.js';
 
@@ -23,8 +24,10 @@ program
   .option('-n, --name <name>', 'Name for the index')
   .option('-u, --update', 'Update existing index incrementally (skip unchanged files)')
   .option('-f, --force', 'Delete and recreate index if it exists')
+  .option('--no-summarize', 'Skip symbol summarization')
+  .option('--resummarize', 'Force re-summarization of all symbols')
   .option('-j, --json', 'Output as JSON')
-  .action(async (path: string, options: { name?: string; update?: boolean; force?: boolean; json?: boolean }) => {
+  .action(async (path: string, options: { name?: string; update?: boolean; force?: boolean; summarize?: boolean; resummarize?: boolean; json?: boolean }) => {
     try {
       // Validate flag conflicts
       if (options.update && options.force) {
@@ -53,6 +56,8 @@ program
         mode: options.update ? 'update' : 'create',
         json: options.json,
         showProgress: !options.json,
+        summarize: options.summarize,
+        resummarize: options.resummarize,
       });
 
       if (options.json) {
@@ -79,6 +84,12 @@ program
         console.log(`Created index "${result.indexName}"`);
         console.log(`  Files processed: ${result.filesProcessed}`);
         console.log(`  Chunks created: ${result.chunksCreated}`);
+        if (result.symbolsSummarized) {
+          console.log(`  Symbols summarized: ${result.symbolsSummarized}`);
+        }
+        if (result.summarizationSkipped) {
+          console.log(`  ⚠ Summarization skipped (Ollama not available)`);
+        }
       }
     } catch (err) {
       if (options.json) {
@@ -338,6 +349,55 @@ program
         for (const error of result.errors) {
           console.error(`  ${error}`);
         }
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Context command - Phase 4: Context Builder
+program
+  .command('context <task>')
+  .description('Build context for a task (for LLM consumption)')
+  .requiredOption('-i, --index <name>', 'Index to search')
+  .option('-l, --limit <n>', 'Max files to include', '15')
+  .option('--max-tokens <n>', 'Token budget', '32000')
+  .option('--depth <n>', 'Graph traversal depth', '2')
+  .option('--summary-only', 'Exclude code snippets')
+  .option('--no-approach', 'Skip approach suggestions')
+  .option('--format <type>', 'Output format (json|markdown)', 'json')
+  .option('-j, --json', 'JSON output (same as --format json)')
+  .action(async (task: string, options: {
+    index: string;
+    limit?: string;
+    maxTokens?: string;
+    depth?: string;
+    summaryOnly?: boolean;
+    approach?: boolean;
+    format?: string;
+    json?: boolean;
+  }) => {
+    try {
+      const result = await runContextCommand(task, {
+        index: options.index,
+        limit: options.limit ? parseInt(options.limit, 10) : undefined,
+        maxTokens: options.maxTokens ? parseInt(options.maxTokens, 10) : undefined,
+        depth: options.depth ? parseInt(options.depth, 10) : undefined,
+        summaryOnly: options.summaryOnly,
+        noApproach: !options.approach,
+        format: options.json ? 'json' : (options.format as 'json' | 'markdown'),
+        json: options.json,
+      });
+
+      if (options.format === 'markdown' && !options.json) {
+        console.log(formatContextMarkdown(result));
+      } else {
+        console.log(JSON.stringify(result, null, 2));
       }
     } catch (err) {
       if (options.json) {

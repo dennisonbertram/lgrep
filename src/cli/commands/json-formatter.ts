@@ -1,6 +1,7 @@
 import type { SearchCommandResult, SymbolUsage, SymbolDefinition, SymbolInfo } from './search.js';
 import type { IndexResult } from './index.js';
 import type { AnalyzeResult } from './analyze.js';
+import type { ContextPackage } from '../../types/context.js';
 
 /**
  * JSON error format
@@ -71,6 +72,8 @@ export interface JsonIndexOutput {
   updated?: number;
   added?: number;
   deleted?: number;
+  symbolsSummarized?: number;
+  summarizationSkipped?: boolean;
   errors: string[];
   duration_ms: number;
 }
@@ -245,6 +248,14 @@ function formatIndexJson(result: IndexResult): JsonIndexOutput {
     output.deleted = result.filesDeleted;
   }
 
+  // Include summarization stats if present
+  if (result.symbolsSummarized !== undefined) {
+    output.symbolsSummarized = result.symbolsSummarized;
+  }
+  if (result.summarizationSkipped !== undefined) {
+    output.summarizationSkipped = result.summarizationSkipped;
+  }
+
   return output;
 }
 
@@ -406,4 +417,44 @@ function formatErrorJson(error: Error): JsonError {
     error: error.message,
     code,
   };
+}
+
+/**
+ * Format a ContextPackage as markdown for human readability.
+ */
+export function formatContextMarkdown(ctx: ContextPackage): string {
+  let output = `# Context for: ${ctx.task}\n\n`;
+  output += `**Index:** ${ctx.indexName}\n`;
+  output += `**Tokens:** ${ctx.tokenCount}\n`;
+  output += `**Timestamp:** ${ctx.timestamp}\n\n`;
+
+  if (ctx.relevantFiles.length > 0) {
+    output += `## Relevant Files\n\n`;
+    for (const file of ctx.relevantFiles) {
+      output += `### ${file.relativePath} (${(file.relevance * 100).toFixed(0)}%)\n`;
+      output += `> ${file.reason}\n\n`;
+      if (file.content && file.content.length > 0) {
+        output += `\`\`\`\n${file.content}\n\`\`\`\n\n`;
+      }
+    }
+  }
+
+  if (ctx.keySymbols.length > 0) {
+    output += `## Key Symbols\n\n`;
+    for (const sym of ctx.keySymbols) {
+      output += `### ${sym.name} (${sym.kind})\n`;
+      output += `**File:** ${sym.file}\n`;
+      output += `> ${sym.summary}\n\n`;
+    }
+  }
+
+  if (ctx.suggestedApproach.length > 0) {
+    output += `## Suggested Approach\n\n`;
+    for (const step of ctx.suggestedApproach) {
+      output += `${step.step}. ${step.description}\n`;
+    }
+    output += '\n';
+  }
+
+  return output;
 }

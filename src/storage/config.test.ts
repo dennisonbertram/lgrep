@@ -48,6 +48,30 @@ describe('config management', () => {
       expect(DEFAULT_CONFIG.excludes).toContain('.git');
       expect(DEFAULT_CONFIG.excludes).toContain('node_modules');
     });
+
+    it('should have default summarization model set to llama3.2:3b', () => {
+      expect(DEFAULT_CONFIG.summarizationModel).toBe('llama3.2:3b');
+    });
+
+    it('should have summarization enabled by default', () => {
+      expect(DEFAULT_CONFIG.enableSummarization).toBe(true);
+    });
+
+    it('should have default max summary length of 100', () => {
+      expect(DEFAULT_CONFIG.maxSummaryLength).toBe(100);
+    });
+
+    it('should have default context max tokens of 32000', () => {
+      expect(DEFAULT_CONFIG.contextMaxTokens).toBe(32000);
+    });
+
+    it('should have default context graph depth of 2', () => {
+      expect(DEFAULT_CONFIG.contextGraphDepth).toBe(2);
+    });
+
+    it('should have default context file limit of 15', () => {
+      expect(DEFAULT_CONFIG.contextFileLimit).toBe(15);
+    });
   });
 
   describe('loadConfig', () => {

@@ -49,6 +49,9 @@ export interface CodeSymbol {
   signature?: string;
   parentId?: string;
   modifiers: string[];
+  summary?: string;
+  summaryModel?: string;
+  summaryGeneratedAt?: string;
 }
 
 /**

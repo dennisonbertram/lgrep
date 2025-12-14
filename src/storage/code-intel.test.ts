@@ -20,6 +20,8 @@ import {
   deleteCallsByFile,
   clearCodeIntel,
   getCodeIntelStats,
+  updateSymbolSummary,
+  getSymbolsWithoutSummaries,
 } from './code-intel.js';
 
 describe('code-intel storage', () => {
@@ -676,6 +678,155 @@ describe('code-intel storage', () => {
       expect(stats.symbols).toBe(2);
       expect(stats.dependencies).toBe(1);
       expect(stats.calls).toBe(3);
+    });
+  });
+
+  describe('Symbol Summaries', () => {
+    it('should update symbol summary', async () => {
+      // First add a symbol
+      const symbols: CodeSymbol[] = [
+        {
+          id: 'sym1',
+          name: 'calculateTotal',
+          kind: 'function',
+          filePath: '/project/src/utils.ts',
+          relativePath: 'src/utils.ts',
+          range: { start: { line: 10, column: 0 }, end: { line: 20, column: 1 } },
+          isExported: true,
+          isDefaultExport: false,
+          modifiers: ['export'],
+        },
+      ];
+
+      await addSymbols(db, indexName, symbols);
+
+      // Update with summary
+      await updateSymbolSummary(
+        db,
+        indexName,
+        'sym1',
+        'Calculates the total of an array of numbers',
+        'claude-opus-4'
+      );
+
+      // Retrieve and check
+      const retrieved = await getSymbols(db, indexName);
+      expect(retrieved).toHaveLength(1);
+      expect(retrieved[0].summary).toBe('Calculates the total of an array of numbers');
+      expect(retrieved[0].summaryModel).toBe('claude-opus-4');
+      expect(retrieved[0].summaryGeneratedAt).toBeDefined();
+    });
+
+    it('should get symbols without summaries', async () => {
+      const symbols: CodeSymbol[] = [
+        {
+          id: 'sym1',
+          name: 'withSummary',
+          kind: 'function',
+          filePath: '/project/src/a.ts',
+          relativePath: 'src/a.ts',
+          range: { start: { line: 1, column: 0 }, end: { line: 2, column: 1 } },
+          isExported: true,
+          isDefaultExport: false,
+          modifiers: [],
+        },
+        {
+          id: 'sym2',
+          name: 'withoutSummary',
+          kind: 'function',
+          filePath: '/project/src/b.ts',
+          relativePath: 'src/b.ts',
+          range: { start: { line: 1, column: 0 }, end: { line: 2, column: 1 } },
+          isExported: true,
+          isDefaultExport: false,
+          modifiers: [],
+        },
+        {
+          id: 'sym3',
+          name: 'alsoWithoutSummary',
+          kind: 'function',
+          filePath: '/project/src/c.ts',
+          relativePath: 'src/c.ts',
+          range: { start: { line: 1, column: 0 }, end: { line: 2, column: 1 } },
+          isExported: true,
+          isDefaultExport: false,
+          modifiers: [],
+        },
+      ];
+
+      await addSymbols(db, indexName, symbols);
+
+      // Add summary to one symbol
+      await updateSymbolSummary(db, indexName, 'sym1', 'A summary', 'claude-opus-4');
+
+      // Get symbols without summaries
+      const unsummarized = await getSymbolsWithoutSummaries(db, indexName);
+
+      expect(unsummarized).toHaveLength(2);
+      const names = unsummarized.map((s) => s.name);
+      expect(names).toContain('withoutSummary');
+      expect(names).toContain('alsoWithoutSummary');
+      expect(names).not.toContain('withSummary');
+    });
+
+    it('should return empty array when all symbols have summaries', async () => {
+      const symbols: CodeSymbol[] = [
+        {
+          id: 'sym1',
+          name: 'func1',
+          kind: 'function',
+          filePath: '/project/src/a.ts',
+          relativePath: 'src/a.ts',
+          range: { start: { line: 1, column: 0 }, end: { line: 2, column: 1 } },
+          isExported: true,
+          isDefaultExport: false,
+          modifiers: [],
+        },
+      ];
+
+      await addSymbols(db, indexName, symbols);
+      await updateSymbolSummary(db, indexName, 'sym1', 'Summary', 'claude-opus-4');
+
+      const unsummarized = await getSymbolsWithoutSummaries(db, indexName);
+
+      expect(unsummarized).toHaveLength(0);
+    });
+
+    it('should persist summary fields correctly', async () => {
+      const symbols: CodeSymbol[] = [
+        {
+          id: 'sym1',
+          name: 'testFunc',
+          kind: 'function',
+          filePath: '/project/src/test.ts',
+          relativePath: 'src/test.ts',
+          range: { start: { line: 1, column: 0 }, end: { line: 2, column: 1 } },
+          isExported: true,
+          isDefaultExport: false,
+          modifiers: [],
+        },
+      ];
+
+      await addSymbols(db, indexName, symbols);
+
+      const timestamp = new Date().toISOString();
+      await updateSymbolSummary(
+        db,
+        indexName,
+        'sym1',
+        'Test function summary',
+        'claude-sonnet-4'
+      );
+
+      const retrieved = await getSymbols(db, indexName);
+      expect(retrieved[0].summary).toBe('Test function summary');
+      expect(retrieved[0].summaryModel).toBe('claude-sonnet-4');
+      expect(retrieved[0].summaryGeneratedAt).toBeDefined();
+
+      // Check timestamp is recent (within last 5 seconds)
+      const generatedTime = new Date(retrieved[0].summaryGeneratedAt!).getTime();
+      const now = new Date().getTime();
+      expect(now - generatedTime).toBeLessThan(5000);
     });
   });
 });
