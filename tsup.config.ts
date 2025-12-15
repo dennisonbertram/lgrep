@@ -12,6 +12,7 @@ export default defineConfig([
     clean: true,
     target: 'node18',
     shims: true,
+    publicDir: 'src/templates',
     banner: {
       js: '#!/usr/bin/env node',
     },

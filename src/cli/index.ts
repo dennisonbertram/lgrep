@@ -9,6 +9,7 @@ import { runContextCommand } from './commands/context.js';
 import { runWatchCommand } from './commands/watch.js';
 import { runStopCommand } from './commands/stop.js';
 import { runSetupCommand } from './commands/setup.js';
+import { runInstallCommand } from './commands/install.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { openDatabase, deleteIndex } from '../storage/lance.js';
 import { getDbPath } from './utils/paths.js';
@@ -525,6 +526,77 @@ program
       } else {
         console.log(`Stopped watcher for '${result.indexName}'`);
       }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Install command - integrates mgrep with Claude Code
+program
+  .command('install')
+  .description('Install mgrep integration with Claude Code')
+  .option('--skip-skill', 'Do not create the skill')
+  .option('--skip-hook', 'Do not add SessionStart hook')
+  .option('--add-to-project', 'Add mgrep instructions to project CLAUDE.md')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: {
+    skipSkill?: boolean;
+    skipHook?: boolean;
+    addToProject?: boolean;
+    json?: boolean;
+  }) => {
+    try {
+      const result = await runInstallCommand({
+        skipSkill: options.skipSkill,
+        skipHook: options.skipHook,
+        addToProject: options.addToProject,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('install', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`\nInstallation failed: ${result.error}`);
+        process.exit(1);
+      }
+
+      // Success output
+      console.log('\nInstallation complete!');
+
+      if (!options.skipSkill) {
+        if (result.skillCreated) {
+          console.log(`  ✓ Skill created at ${result.skillPath}`);
+        } else if (result.skillAlreadyExists) {
+          console.log(`  ○ Skill already exists at ${result.skillPath}`);
+        }
+      }
+
+      if (!options.skipHook) {
+        if (result.hookAdded) {
+          console.log(`  ✓ SessionStart hook added to ${result.settingsPath}`);
+        } else if (result.hookAlreadyExists) {
+          console.log(`  ○ SessionStart hook already exists in ${result.settingsPath}`);
+        }
+      }
+
+      if (options.addToProject) {
+        if (result.projectClaudeUpdated) {
+          console.log(`  ✓ Project CLAUDE.md updated at ${result.projectClaudePath}`);
+        } else if (result.projectClaudeAlreadyHasMgrep) {
+          console.log(`  ○ Project CLAUDE.md already has mgrep section at ${result.projectClaudePath}`);
+        }
+      }
+
+      console.log('\nmgrep is now integrated with Claude Code!');
+      console.log('The SessionStart hook will automatically start watchers for your projects.');
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));
