@@ -28,7 +28,7 @@
     "cli",
     "vector-search"
   ],
-  "author": "",
+  "author": "Dennison Bertram <dennison@dennisonbertram.com>",
   "license": "MIT",
   "dependencies": {
     "@babel/parser": "^7.28.5",
