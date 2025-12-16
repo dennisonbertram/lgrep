@@ -13,6 +13,7 @@ import { runInstallCommand } from './commands/install.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { openDatabase, deleteIndex } from '../storage/lance.js';
 import { getDbPath } from './utils/paths.js';
+import { checkFirstRun } from './utils/first-run.js';
 
 const program = new Command();
 
@@ -97,14 +98,29 @@ program
   .option('-n, --name <name>', 'Name for the index')
   .option('-u, --update', 'Update existing index incrementally (skip unchanged files)')
   .option('-f, --force', 'Delete and recreate index if it exists')
+  .option('-r, --retry', 'Retry a failed index')
   .option('--no-summarize', 'Skip symbol summarization')
   .option('--resummarize', 'Force re-summarization of all symbols')
   .option('-j, --json', 'Output as JSON')
-  .action(async (path: string, options: { name?: string; update?: boolean; force?: boolean; summarize?: boolean; resummarize?: boolean; json?: boolean }) => {
+  .action(async (path: string, options: { name?: string; update?: boolean; force?: boolean; retry?: boolean; summarize?: boolean; resummarize?: boolean; json?: boolean }) => {
     try {
+      // Check for first run and show setup prompt if needed
+      if (!options.json) {
+        await checkFirstRun();
+      }
+
       // Validate flag conflicts
       if (options.update && options.force) {
         throw new Error('Cannot use both --update and --force flags together');
+      }
+      if (options.retry && options.force) {
+        throw new Error('Cannot use both --retry and --force flags together');
+      }
+      if (options.retry && options.update) {
+        throw new Error('Cannot use both --retry and --update flags together');
+      }
+      if (options.retry && !options.name) {
+        throw new Error('--retry requires --name to specify which failed index to retry');
       }
 
       // Handle --force flag: delete existing index first
@@ -118,15 +134,18 @@ program
         }
       }
 
-      if (!options.json && !options.update) {
+      if (!options.json && !options.update && !options.retry) {
         console.log(`Indexing ${path}...`);
       } else if (!options.json && options.update) {
         console.log(`Updating index for ${path}...`);
+      } else if (!options.json && options.retry) {
+        console.log(`Retrying failed index "${options.name}"...`);
       }
 
       const result = await runIndexCommand(path, {
         name: options.name,
         mode: options.update ? 'update' : 'create',
+        retry: options.retry,
         json: options.json,
         showProgress: !options.json,
         summarize: options.summarize,
@@ -195,6 +214,11 @@ program
     json?: boolean;
   }) => {
     try {
+      // Check for first run and show setup prompt if needed
+      if (!options.json) {
+        await checkFirstRun();
+      }
+
       const result = await runSearchCommand(query || '', {
         index: options.index,
         limit: options.limit ? parseInt(options.limit, 10) : undefined,
@@ -487,12 +511,14 @@ program
   .command('watch <path>')
   .description('Start watching a directory for changes')
   .option('-n, --name <name>', 'Name for the index')
+  .option('-r, --restart', 'Restart if already running')
   .option('-j, --json', 'Output as JSON')
-  .action(async (path: string, options: { name?: string; json?: boolean }) => {
+  .action(async (path: string, options: { name?: string; json?: boolean; restart?: boolean }) => {
     try {
       const result = await runWatchCommand(path, {
         name: options.name,
         json: options.json,
+        restart: options.restart,
       });
 
       if (options.json) {

@@ -1,6 +1,8 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { getConfigPath } from '../cli/utils/paths.js';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { getConfigPath, getLgrepHome } from '../cli/utils/paths.js';
+import { DEFAULT_EXCLUDES, DEFAULT_SECRET_EXCLUDES } from '../core/walker.js';
 
 /**
  * Configuration schema for lgrep.
@@ -30,6 +32,10 @@ export interface LgrepConfig {
   contextGraphDepth: number;
   /** Maximum number of files to include in context */
   contextFileLimit: number;
+  /** Batch size for embedding API calls */
+  embedBatchSize: number;
+  /** Batch size for LanceDB writes */
+  dbBatchSize: number;
 }
 
 /**
@@ -40,41 +46,16 @@ export const DEFAULT_CONFIG: LgrepConfig = {
   chunkSize: 500,
   chunkOverlap: 50,
   maxFileSize: 5 * 1024 * 1024, // 5MB
-  excludes: [
-    '.git',
-    '.hg',
-    '.svn',
-    'node_modules',
-    'dist',
-    'build',
-    'target',
-    '.venv',
-    '__pycache__',
-    '.DS_Store',
-    '*.min.js',
-    '*.min.css',
-    '*.lock',
-    'package-lock.json',
-    'yarn.lock',
-    'pnpm-lock.yaml',
-  ],
-  secretExcludes: [
-    '.env*',
-    '*.pem',
-    '*.key',
-    'id_rsa*',
-    '*.p12',
-    'credentials.json',
-    '.aws/*',
-    '.npmrc',
-    '.pypirc',
-  ],
+  excludes: [...DEFAULT_EXCLUDES],
+  secretExcludes: [...DEFAULT_SECRET_EXCLUDES],
   summarizationModel: 'llama3.2:3b',
   enableSummarization: true,
   maxSummaryLength: 100,
   contextMaxTokens: 32000,
   contextGraphDepth: 2,
   contextFileLimit: 15,
+  embedBatchSize: 10,
+  dbBatchSize: 250,
 };
 
 /**
@@ -143,4 +124,77 @@ export async function setConfigValue<K extends keyof LgrepConfig>(
  */
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
+}
+
+/**
+ * State file for tracking first-run status.
+ */
+interface StateFile {
+  setupPromptShown?: boolean;
+  lastOllamaCheck?: string;
+  version?: string;
+}
+
+/**
+ * Get the path to the state file.
+ */
+function getStatePath(): string {
+  return join(getLgrepHome(), '.state.json');
+}
+
+/**
+ * Load state file (synchronous for CLI startup).
+ */
+function loadState(): StateFile {
+  try {
+    const statePath = getStatePath();
+    if (existsSync(statePath)) {
+      return JSON.parse(readFileSync(statePath, 'utf-8'));
+    }
+  } catch {
+    // Ignore errors, return empty state
+  }
+  return {};
+}
+
+/**
+ * Save state file (synchronous for CLI startup).
+ */
+function saveState(state: StateFile): void {
+  try {
+    const statePath = getStatePath();
+    const stateDir = dirname(statePath);
+    if (!existsSync(stateDir)) {
+      mkdirSync(stateDir, { recursive: true });
+    }
+    writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
+  } catch {
+    // Ignore errors - state is non-critical
+  }
+}
+
+/**
+ * Check if setup prompt has been shown.
+ */
+export function hasShownSetupPrompt(): boolean {
+  const state = loadState();
+  return state.setupPromptShown === true;
+}
+
+/**
+ * Mark that setup prompt has been shown.
+ */
+export function markSetupPromptShown(): void {
+  const state = loadState();
+  state.setupPromptShown = true;
+  saveState(state);
+}
+
+/**
+ * Reset the setup prompt (for testing or after updates).
+ */
+export function resetSetupPrompt(): void {
+  const state = loadState();
+  state.setupPromptShown = false;
+  saveState(state);
 }

@@ -11,6 +11,7 @@ import { runIndexCommand } from './index.js';
 export interface WatchOptions {
   name?: string;
   json?: boolean;
+  restart?: boolean;
 }
 
 /**
@@ -71,7 +72,12 @@ export async function runWatchCommand(
   // Check if watcher is already running
   const existingDaemon = await manager.status(indexName);
   if (existingDaemon && existingDaemon.status === 'running') {
-    throw new Error(`Watcher for "${indexName}" is already running`);
+    if (options.restart) {
+      // Stop existing daemon before restarting
+      await manager.stop(indexName);
+    } else {
+      throw new Error(`Watcher for "${indexName}" is already running (use --restart to restart)`);
+    }
   }
 
   // Start the watcher daemon

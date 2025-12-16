@@ -25,7 +25,8 @@ vi.mock('../../core/embeddings.js', () => ({
 }));
 
 import { runIndexCommand, type IndexOptions } from './index.js';
-import { openDatabase, getIndex, getChunkCount } from '../../storage/lance.js';
+import { openDatabase, getIndex, getChunkCount, updateIndexStatus } from '../../storage/lance.js';
+import { createEmbeddingClient } from '../../core/embeddings.js';
 
 describe('index command', () => {
   let testDir: string;
@@ -210,6 +211,71 @@ describe('index command', () => {
       expect(result.success).toBe(true);
       // Symbols should only come from the .ts file
       expect(result.filesProcessed).toBeGreaterThan(0);
+    });
+  });
+
+  describe('crash handling', () => {
+    it('should mark index as failed when embedding fails', async () => {
+      // Mock embedding to fail
+      const mockClient = createEmbeddingClient({ model: 'test' });
+      vi.mocked(mockClient.embed).mockRejectedValueOnce(new Error('Embedding service unavailable'));
+
+      await expect(
+        runIndexCommand(sourceDir, { name: 'crash-test', showProgress: false })
+      ).rejects.toThrow();
+
+      // Check that index is marked as failed
+      const dbPath = join(testDir, 'db');
+      const db = await openDatabase(dbPath);
+      const handle = await getIndex(db, 'crash-test');
+
+      expect(handle).not.toBeNull();
+      expect(handle?.metadata.status).toBe('failed');
+
+      await db.close();
+    });
+
+    it('should allow retry of failed indexes', async () => {
+      // First, create a failed index manually
+      const dbPath = join(testDir, 'db');
+      const db = await openDatabase(dbPath);
+
+      // Create and immediately fail an index
+      const { createIndex } = await import('../../storage/lance.js');
+      const handle = await createIndex(db, {
+        name: 'retry-test',
+        rootPath: sourceDir,
+        model: 'test-model',
+        modelDimensions: 4,
+      });
+      await updateIndexStatus(db, handle, 'failed');
+      await db.close();
+
+      // Now retry with the retry flag
+      const result = await runIndexCommand(sourceDir, {
+        name: 'retry-test',
+        showProgress: false,
+        retry: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.indexName).toBe('retry-test');
+
+      // Verify status is now ready
+      const db2 = await openDatabase(dbPath);
+      const handle2 = await getIndex(db2, 'retry-test');
+      expect(handle2?.metadata.status).toBe('ready');
+      await db2.close();
+    });
+
+    it('should not allow retry on non-failed indexes', async () => {
+      // Create a successful index first
+      await runIndexCommand(sourceDir, { name: 'no-retry-test', showProgress: false });
+
+      // Try to retry it - should fail because it's not in failed state
+      await expect(
+        runIndexCommand(sourceDir, { name: 'no-retry-test', retry: true, showProgress: false })
+      ).rejects.toThrow(/not in failed state/i);
     });
   });
 });

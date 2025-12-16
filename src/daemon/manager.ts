@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync, createWriteStream } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getLgrepHome } from '../cli/utils/paths.js';
@@ -106,28 +106,71 @@ export class DaemonManager {
     // Get the worker script path
     const workerPath = this.getWorkerPath();
 
-    // Open log file
+    // Get log file path - clear any stale log to avoid false failure detection
     const logFile = this.getLogFilePath(indexName);
+    if (existsSync(logFile)) {
+      unlinkSync(logFile);
+    }
 
-    // Spawn the daemon process
+    // Spawn the daemon using shell to ensure proper detachment
+    // This approach works reliably across platforms
     const child = spawn(
-      process.execPath,
-      [workerPath, indexName, rootPath],
+      'sh',
+      [
+        '-c',
+        `"${process.execPath}" "${workerPath}" "${indexName}" "${rootPath}" "${logFile}" &`,
+      ],
       {
         detached: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: 'ignore',
+        shell: false,
       }
     );
 
-    // Redirect stdout and stderr to log file
-    const logStream = createWriteStream(logFile, { flags: 'a' });
-    child.stdout?.pipe(logStream);
-    child.stderr?.pipe(logStream);
+    // Handle spawn errors
+    child.on('error', (err) => {
+      console.error(`Failed to spawn daemon: ${err.message}`);
+    });
 
     // Unref so parent can exit
     child.unref();
 
-    const pid = child.pid!;
+    // Wait for the shell to start the background process
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Find the actual worker process PID by checking the log file
+    // The worker writes its PID to the log
+    let pid: number | undefined;
+    for (let i = 0; i < 10; i++) {
+      if (existsSync(logFile)) {
+        const logContent = readFileSync(logFile, 'utf-8');
+        const match = logContent.match(/Worker process running with PID: (\d+)/);
+        if (match && match[1]) {
+          pid = parseInt(match[1], 10);
+          break;
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    if (!pid) {
+      // Try to read log file for error info
+      let logContent = '';
+      if (existsSync(logFile)) {
+        logContent = readFileSync(logFile, 'utf-8');
+      }
+      throw new Error(`Failed to start daemon - could not find worker PID. Log: ${logContent || '(empty)'}`);
+    }
+
+    if (!this.isProcessRunning(pid)) {
+      // Read log file for crash info
+      let logContent = '';
+      if (existsSync(logFile)) {
+        logContent = readFileSync(logFile, 'utf-8');
+      }
+      throw new Error(`Daemon process (PID ${pid}) died immediately after spawning. Log:\n${logContent || '(no log)'}`);
+    }
+
     const startedAt = new Date().toISOString();
 
     // Write PID file
@@ -238,7 +281,27 @@ export class DaemonManager {
     const currentFile = fileURLToPath(import.meta.url);
     const currentDir = dirname(currentFile);
 
-    // Worker is in the same directory
-    return join(currentDir, 'worker.js');
+    // Multiple possible locations:
+    // 1. Same directory (dev mode, both in dist/daemon/)
+    // 2. Sibling daemon directory (bundled, cli is in dist/cli/, worker in dist/daemon/)
+    // 3. From source (tests), need to look in dist/daemon/
+    const possiblePaths = [
+      join(currentDir, 'worker.js'),
+      join(dirname(currentDir), 'daemon', 'worker.js'),
+    ];
+
+    // If running from src, also check dist
+    if (currentDir.includes('/src/')) {
+      const projectRoot = currentDir.split('/src/')[0] as string;
+      possiblePaths.push(join(projectRoot, 'dist', 'daemon', 'worker.js'));
+    }
+
+    for (const p of possiblePaths) {
+      if (existsSync(p)) {
+        return p;
+      }
+    }
+
+    throw new Error(`Worker script not found. currentDir=${currentDir}, searched: ${possiblePaths.join(', ')}`);
   }
 }

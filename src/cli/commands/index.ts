@@ -13,7 +13,12 @@ import {
   addChunks,
   updateIndexStatus,
   getFileContentHashes,
+  getFileMetadataHashes,
+  createFileMetadataTable,
+  upsertFileMetadata,
+  deleteFileMetadata,
   deleteChunksByFilePath,
+  deleteAllChunks,
   type DocumentChunk,
 } from '../../storage/lance.js';
 import {
@@ -45,6 +50,7 @@ export interface IndexOptions {
   json?: boolean;
   summarize?: boolean;     // Default: true
   resummarize?: boolean;   // Default: false
+  retry?: boolean;         // Default: false - retry a failed index
 }
 
 /**
@@ -109,6 +115,9 @@ export async function runIndexCommand(
     const db = await openDatabase(dbPath);
     const cache = await openEmbeddingCache(cachePath);
 
+    // Declare handle outside try block so it's accessible in catch for failure marking
+    let handle: Awaited<ReturnType<typeof getIndex>> | Awaited<ReturnType<typeof createIndex>> | undefined;
+
     try {
       // Create embedding client and get dimensions
       spinner?.update('Initializing embedding model...');
@@ -116,10 +125,26 @@ export async function runIndexCommand(
       const dimensions = await embedClient.getModelDimensions();
 
       // Get or create index based on mode
-      let handle;
       let existingHashes: Map<string, string> = new Map();
 
-      if (mode === 'update') {
+      if (options.retry) {
+        // Retry mode: index must exist and be in failed state
+        spinner?.update('Loading failed index for retry...');
+        handle = await getIndex(db, indexName);
+        if (!handle) {
+          throw new Error(`Index "${indexName}" does not exist. Cannot retry non-existent index.`);
+        }
+        if (handle.metadata.status !== 'failed') {
+          throw new Error(`Index "${indexName}" is not in failed state (current: ${handle.metadata.status}). Cannot retry.`);
+        }
+
+        // Delete all existing chunks and start fresh
+        spinner?.update('Clearing failed index data...');
+        await deleteAllChunks(db, handle);
+
+        // Update status to building
+        await updateIndexStatus(db, handle, 'building');
+      } else if (mode === 'update') {
         // Update mode: index must exist
         spinner?.update('Loading existing index...');
         handle = await getIndex(db, indexName);
@@ -128,7 +153,17 @@ export async function runIndexCommand(
         }
 
         // Get existing file hashes for incremental comparison
-        existingHashes = await getFileContentHashes(db, handle);
+        // Try metadata table first (fast), fall back to chunk scan (slow)
+        const metadataHashes = await getFileMetadataHashes(db, handle);
+
+        // If we have metadata, use it; otherwise fall back to chunk scan
+        // This handles migration from old indexes that don't have metadata tables
+        if (metadataHashes.size > 0) {
+          existingHashes = metadataHashes;
+        } else {
+          // No metadata or empty - fall back to chunk scan (migration path)
+          existingHashes = await getFileContentHashes(db, handle);
+        }
       } else {
         // Create mode: index must not exist
         spinner?.update('Creating index...');
@@ -138,6 +173,8 @@ export async function runIndexCommand(
           model: config.model,
           modelDimensions: dimensions,
         });
+        // Create file metadata table for hash optimization
+        await createFileMetadataTable(db, handle);
       }
 
       // Walk files
@@ -158,11 +195,34 @@ export async function runIndexCommand(
       let totalCalls = 0;
       let totalSymbolsSummarized = 0;
 
-      // Store symbols for later summarization
-      const allExtractedSymbols: Array<{ symbol: CodeSymbol; content: string }> = [];
-
       // Build set of current file paths for deletion detection
       const currentFilePaths = new Set(files.map(f => f.absolutePath));
+
+      // Accumulate chunks for batched writes
+      let pendingChunks: DocumentChunk[] = [];
+
+      // Track file metadata for batch upsert
+      const fileMetadataMap = new Map<string, { hash: string; chunkCount: number }>();
+
+      // Initialize summarizer once if summarization is enabled
+      // This avoids creating the client inside the loop
+      let summarizer: Awaited<ReturnType<typeof createSummarizerClient>> | null = null;
+      let summarizationSkipped = false;
+      if (options.summarize !== false) {
+        summarizer = createSummarizerClient({
+          model: config.summarizationModel,
+        });
+
+        // Check if summarizer is available
+        const health = await summarizer.healthCheck();
+        if (!health.healthy || !health.modelAvailable) {
+          if (showProgress && !options.json) {
+            console.warn('⚠ Summarization skipped: Ollama not available');
+          }
+          summarizationSkipped = true;
+          summarizer = null;
+        }
+      }
 
       // Process files
       let processedFiles = 0;
@@ -200,12 +260,26 @@ export async function runIndexCommand(
           embedClient,
           cache,
           config.chunkSize,
-          config.chunkOverlap
+          config.chunkOverlap,
+          config.embedBatchSize
         );
 
+        // Accumulate chunks and flush in batches
         if (chunks.length > 0) {
-          await addChunks(db, handle, chunks);
-          totalChunks += chunks.length;
+          pendingChunks.push(...chunks);
+
+          // Track file metadata for later upsert
+          fileMetadataMap.set(file.absolutePath, {
+            hash: currentHash,
+            chunkCount: chunks.length,
+          });
+
+          // Flush when we reach the batch threshold
+          while (pendingChunks.length >= config.dbBatchSize) {
+            const batch = pendingChunks.splice(0, config.dbBatchSize);
+            await addChunks(db, handle, batch);
+            totalChunks += batch.length;
+          }
         }
 
         // Extract code intelligence for JS/TS files
@@ -223,9 +297,44 @@ export async function runIndexCommand(
             await addSymbols(db, indexName, symbols);
             totalSymbols += symbols.length;
 
-            // Store symbols with their content for later summarization
-            for (const symbol of symbols) {
-              allExtractedSymbols.push({ symbol, content });
+            // Summarize symbols immediately if enabled
+            // This happens while file content is still in memory
+            if (summarizer && symbols.length > 0) {
+              for (const symbol of symbols) {
+                // Skip if already has summary (unless resummarize)
+                if (symbol.summary && !options.resummarize) continue;
+
+                // Skip symbols without meaningful code (imports, exports)
+                if (symbol.kind === 'import' || symbol.kind === 'export') continue;
+
+                try {
+                  // Get the code for this symbol from the file
+                  const code = getSymbolCode(content, symbol);
+
+                  const summary = await summarizer.summarizeSymbol({
+                    name: symbol.name,
+                    kind: symbol.kind,
+                    signature: symbol.signature,
+                    documentation: symbol.documentation,
+                    code,
+                  });
+
+                  await updateSymbolSummary(
+                    db,
+                    indexName,
+                    symbol.id,
+                    summary,
+                    config.summarizationModel
+                  );
+
+                  totalSymbolsSummarized++;
+                } catch (error) {
+                  // Log but don't fail indexing
+                  if (showProgress && !options.json) {
+                    console.warn(`⚠ Failed to summarize ${symbol.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                  }
+                }
+              }
             }
 
             // Extract dependencies
@@ -246,71 +355,36 @@ export async function runIndexCommand(
         }
       }
 
+      // Flush any remaining chunks after all files are processed
+      if (pendingChunks.length > 0) {
+        await addChunks(db, handle, pendingChunks);
+        totalChunks += pendingChunks.length;
+      }
+
       // Handle deleted files in update mode
       let filesDeleted = 0;
       if (mode === 'update') {
         for (const existingPath of Array.from(existingHashes.keys())) {
           if (!currentFilePaths.has(existingPath)) {
-            // File was deleted - remove its chunks
+            // File was deleted - remove its chunks and metadata
             await deleteChunksByFilePath(db, handle, existingPath);
+            await deleteFileMetadata(db, handle, existingPath);
             filesDeleted++;
           }
         }
       }
 
-      // Summarize symbols if enabled
-      let summarizationSkipped = false;
-      if (options.summarize !== false && allExtractedSymbols.length > 0) {
-        spinner?.update('Summarizing symbols...');
+      // Upsert file metadata for all processed files
+      // Ensure metadata table exists first (for update mode with old indexes)
+      try {
+        await createFileMetadataTable(db, handle);
+      } catch {
+        // Table already exists, continue
+      }
 
-        const summarizer = createSummarizerClient({
-          model: config.summarizationModel,
-        });
-
-        // Check if summarizer is available
-        const health = await summarizer.healthCheck();
-        if (!health.healthy || !health.modelAvailable) {
-          if (showProgress && !options.json) {
-            console.warn('⚠ Summarization skipped: Ollama not available');
-          }
-          summarizationSkipped = true;
-        } else {
-          for (const { symbol, content } of allExtractedSymbols) {
-            // Skip if already has summary (unless resummarize)
-            if (symbol.summary && !options.resummarize) continue;
-
-            // Skip symbols without meaningful code (imports, exports)
-            if (symbol.kind === 'import' || symbol.kind === 'export') continue;
-
-            try {
-              // Get the code for this symbol from the file
-              const code = getSymbolCode(content, symbol);
-
-              const summary = await summarizer.summarizeSymbol({
-                name: symbol.name,
-                kind: symbol.kind,
-                signature: symbol.signature,
-                code,
-                documentation: symbol.documentation,
-              });
-
-              await updateSymbolSummary(
-                db,
-                indexName,
-                symbol.id,
-                summary,
-                config.summarizationModel
-              );
-
-              totalSymbolsSummarized++;
-            } catch (error) {
-              // Log but don't fail indexing
-              if (showProgress && !options.json) {
-                console.warn(`⚠ Failed to summarize ${symbol.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-              }
-            }
-          }
-        }
+      // Upsert metadata for all processed files
+      for (const [filePath, { hash, chunkCount }] of fileMetadataMap.entries()) {
+        await upsertFileMetadata(db, handle, filePath, hash, chunkCount);
       }
 
       // Update index status to ready
@@ -350,6 +424,14 @@ export async function runIndexCommand(
         summarizationSkipped: summarizationSkipped ? true : undefined,
       };
     } catch (err) {
+      // Mark index as failed before re-throwing
+      if (handle) {
+        try {
+          await updateIndexStatus(db, handle, 'failed');
+        } catch {
+          // Ignore errors when marking as failed
+        }
+      }
       throw err;
     } finally {
       await db.close();
@@ -556,7 +638,8 @@ async function processFile(
   embedClient: Awaited<ReturnType<typeof createEmbeddingClient>>,
   cache: Awaited<ReturnType<typeof openEmbeddingCache>>,
   chunkSize: number,
-  chunkOverlap: number
+  chunkOverlap: number,
+  embedBatchSize: number
 ): Promise<DocumentChunk[]> {
   // Read file content
   const content = await readFile(file.absolutePath, 'utf-8');
@@ -569,38 +652,81 @@ async function processFile(
     overlapTokens: chunkOverlap,
   });
 
-  const documentChunks: DocumentChunk[] = [];
+  // Pre-allocate document chunks array
+  const documentChunks: DocumentChunk[] = new Array(textChunks.length);
 
-  for (const chunk of textChunks) {
-    // Check cache first
-    let vector = await getEmbedding(cache, embedClient.model, chunk.content);
+  // Separate cached and uncached chunks
+  const uncachedChunks: Array<{ chunk: typeof textChunks[0]; index: number }> = [];
 
-    if (!vector) {
-      // Generate embedding
-      const result = await embedClient.embed(chunk.content);
-      const embedding = result.embeddings[0];
-      if (!embedding) {
-        throw new Error(`Failed to generate embedding for chunk ${chunk.index}`);
-      }
-      vector = new Float32Array(embedding);
+  for (let i = 0; i < textChunks.length; i++) {
+    const chunk = textChunks[i];
+    if (!chunk) continue;
 
-      // Cache it
-      await setEmbedding(cache, embedClient.model, chunk.content, vector);
+    const cached = await getEmbedding(cache, embedClient.model, chunk.content);
+
+    if (cached) {
+      // Use cached vector
+      documentChunks[i] = {
+        id: randomUUID(),
+        filePath: file.absolutePath,
+        relativePath: file.relativePath,
+        contentHash,
+        chunkIndex: chunk.index,
+        content: chunk.content,
+        vector: cached,
+        lineStart: chunk.startLine,
+        lineEnd: chunk.endLine,
+        fileType,
+        createdAt: new Date().toISOString(),
+      };
+    } else {
+      uncachedChunks.push({ chunk, index: i });
     }
+  }
 
-    documentChunks.push({
-      id: randomUUID(),
-      filePath: file.absolutePath,
-      relativePath: file.relativePath,
-      contentHash,
-      chunkIndex: chunk.index,
-      content: chunk.content,
-      vector,
-      lineStart: chunk.startLine,
-      lineEnd: chunk.endLine,
-      fileType,
-      createdAt: new Date().toISOString(),
-    });
+  // Batch embed uncached chunks
+  for (let i = 0; i < uncachedChunks.length; i += embedBatchSize) {
+    const batch = uncachedChunks.slice(i, i + embedBatchSize);
+    const contents = batch.map((b) => b.chunk.content);
+
+    // Generate embeddings for the batch
+    const result = await embedClient.embed(contents);
+
+    for (let j = 0; j < batch.length; j++) {
+      const batchItem = batch[j];
+      if (!batchItem) continue;
+
+      const embedding = result.embeddings[j];
+      if (!embedding) {
+        throw new Error(
+          `Failed to generate embedding for chunk ${batchItem.chunk.index}`
+        );
+      }
+      const vector = new Float32Array(embedding);
+
+      // Cache the embedding
+      await setEmbedding(
+        cache,
+        embedClient.model,
+        batchItem.chunk.content,
+        vector
+      );
+
+      // Store the document chunk
+      documentChunks[batchItem.index] = {
+        id: randomUUID(),
+        filePath: file.absolutePath,
+        relativePath: file.relativePath,
+        contentHash,
+        chunkIndex: batchItem.chunk.index,
+        content: batchItem.chunk.content,
+        vector,
+        lineStart: batchItem.chunk.startLine,
+        lineEnd: batchItem.chunk.endLine,
+        fileType,
+        createdAt: new Date().toISOString(),
+      };
+    }
   }
 
   return documentChunks;

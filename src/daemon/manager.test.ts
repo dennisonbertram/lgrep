@@ -117,14 +117,15 @@ describe('DaemonManager', () => {
       await manager.start('test-index', rootPath);
       const logFile = join(testHome, 'logs', 'test-index.log');
 
-      // Give the worker process a moment to create the log file
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Give the worker process time to spawn and create the log file
+      // Worker now manages its own logging, so it may take a bit longer
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       expect(existsSync(logFile)).toBe(true);
 
       // Clean up
       await manager.stop('test-index');
-    });
+    }, 10000);
   });
 
   describe('stop', () => {

@@ -218,6 +218,18 @@ export async function listIndexes(db: IndexDatabase): Promise<IndexHandle[]> {
 }
 
 const TABLE_NAME = 'chunks';
+const FILE_METADATA_TABLE_SUFFIX = 'files';
+
+/**
+ * File metadata record for hash optimization.
+ */
+export interface FileMetadata {
+  file_path: string;
+  content_hash: string;
+  chunk_count: number;
+  updated_at: string;
+  [key: string]: unknown;  // Index signature for LanceDB compatibility
+}
 
 /**
  * Get or create the LanceDB table for an index.
@@ -477,6 +489,180 @@ export async function deleteChunksByFilePath(
   await table.delete(`file_path = '${filePath.replace(/'/g, "''")}'`);
 
   return deleteCount;
+}
+
+/**
+ * Delete all chunks from an index.
+ * Returns the number of chunks deleted.
+ */
+export async function deleteAllChunks(
+  db: IndexDatabase,
+  handle: IndexHandle
+): Promise<number> {
+  const fullTableName = `${handle.name}_${TABLE_NAME}`;
+  const tableNames = await db.connection.tableNames();
+
+  if (!tableNames.includes(fullTableName)) {
+    return 0;
+  }
+
+  // Count existing chunks first
+  const count = await getChunkCount(db, handle);
+  if (count === 0) {
+    return 0;
+  }
+
+  // Delete all chunks by dropping and recreating table
+  // This is more efficient than deleting row by row
+  await db.connection.dropTable(fullTableName);
+
+  // Recreate empty table with same schema
+  await db.connection.createTable(fullTableName, [
+    {
+      id: '',
+      file_path: '',
+      relative_path: '',
+      content_hash: '',
+      chunk_index: 0,
+      content: '',
+      vector: new Float32Array(handle.metadata.modelDimensions),
+      line_start: 0,
+      line_end: 0,
+      file_type: '',
+      created_at: '',
+    },
+  ]);
+
+  // Delete the placeholder row
+  const table = await db.connection.openTable(fullTableName);
+  await table.delete("id = ''");
+
+  return count;
+}
+
+/**
+ * Create or ensure the file metadata table exists for an index.
+ * This table stores file-level information for efficient hash lookups.
+ */
+export async function createFileMetadataTable(
+  db: IndexDatabase,
+  handle: IndexHandle
+): Promise<void> {
+  const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
+  const tableNames = await db.connection.tableNames();
+
+  if (tableNames.includes(fullTableName)) {
+    // Table already exists
+    return;
+  }
+
+  // Create table with placeholder record
+  const placeholder: FileMetadata = {
+    file_path: '__placeholder__',
+    content_hash: '',
+    chunk_count: 0,
+    updated_at: new Date().toISOString(),
+  };
+
+  await db.connection.createTable(fullTableName, [placeholder]);
+
+  // Delete the placeholder
+  const table = await db.connection.openTable(fullTableName);
+  await table.delete("file_path = '__placeholder__'");
+}
+
+/**
+ * Upsert file metadata for a single file.
+ * If the file already exists, updates its hash and chunk count.
+ * If the file doesn't exist, inserts a new record.
+ */
+export async function upsertFileMetadata(
+  db: IndexDatabase,
+  handle: IndexHandle,
+  filePath: string,
+  contentHash: string,
+  chunkCount: number
+): Promise<void> {
+  const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
+  const tableNames = await db.connection.tableNames();
+
+  if (!tableNames.includes(fullTableName)) {
+    throw new Error(`File metadata table does not exist for index "${handle.name}"`);
+  }
+
+  const table = await db.connection.openTable(fullTableName);
+
+  // Check if file already exists
+  const existing = await table
+    .query()
+    .where(`file_path = '${filePath.replace(/'/g, "''")}'`)
+    .toArray();
+
+  if (existing.length > 0) {
+    // Update existing record by deleting and reinserting
+    await table.delete(`file_path = '${filePath.replace(/'/g, "''")}'`);
+  }
+
+  // Insert new record
+  const record: FileMetadata = {
+    file_path: filePath,
+    content_hash: contentHash,
+    chunk_count: chunkCount,
+    updated_at: new Date().toISOString(),
+  };
+
+  await table.add([record]);
+}
+
+/**
+ * Get content hashes for all files in an index from the metadata table.
+ * This is much more efficient than loading all chunks.
+ * Returns a Map of filePath -> contentHash.
+ */
+export async function getFileMetadataHashes(
+  db: IndexDatabase,
+  handle: IndexHandle
+): Promise<Map<string, string>> {
+  const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
+  const tableNames = await db.connection.tableNames();
+
+  if (!tableNames.includes(fullTableName)) {
+    // Metadata table doesn't exist - return empty map
+    // This handles migration case for old indexes
+    return new Map();
+  }
+
+  const table = await db.connection.openTable(fullTableName);
+  const records = await table.query().select(['file_path', 'content_hash']).toArray();
+
+  const hashMap = new Map<string, string>();
+  for (const record of records) {
+    const filePath = record['file_path'] as string;
+    const contentHash = record['content_hash'] as string;
+    hashMap.set(filePath, contentHash);
+  }
+
+  return hashMap;
+}
+
+/**
+ * Delete file metadata for a specific file path.
+ */
+export async function deleteFileMetadata(
+  db: IndexDatabase,
+  handle: IndexHandle,
+  filePath: string
+): Promise<void> {
+  const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
+  const tableNames = await db.connection.tableNames();
+
+  if (!tableNames.includes(fullTableName)) {
+    // Table doesn't exist - nothing to delete
+    return;
+  }
+
+  const table = await db.connection.openTable(fullTableName);
+  await table.delete(`file_path = '${filePath.replace(/'/g, "''")}'`);
 }
 
 /**

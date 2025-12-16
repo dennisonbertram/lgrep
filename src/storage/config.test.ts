@@ -72,6 +72,14 @@ describe('config management', () => {
     it('should have default context file limit of 15', () => {
       expect(DEFAULT_CONFIG.contextFileLimit).toBe(15);
     });
+
+    it('should have default embed batch size of 10', () => {
+      expect(DEFAULT_CONFIG.embedBatchSize).toBe(10);
+    });
+
+    it('should have default db batch size of 250', () => {
+      expect(DEFAULT_CONFIG.dbBatchSize).toBe(250);
+    });
   });
 
   describe('loadConfig', () => {
@@ -176,6 +184,20 @@ describe('config management', () => {
       const config = await loadConfig();
       expect(config.model).toBe('updated-model');
       expect(config.chunkSize).toBe(999); // Should be preserved
+    });
+
+    it('should set embedBatchSize value', async () => {
+      await setConfigValue('embedBatchSize', 20);
+
+      const config = await loadConfig();
+      expect(config.embedBatchSize).toBe(20);
+    });
+
+    it('should set dbBatchSize value', async () => {
+      await setConfigValue('dbBatchSize', 500);
+
+      const config = await loadConfig();
+      expect(config.dbBatchSize).toBe(500);
     });
   });
 });
