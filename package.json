@@ -30,6 +30,14 @@
   ],
   "author": "Dennison Bertram <dennison@dennisonbertram.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dennisonbertram/lgrep.git"
+  },
+  "homepage": "https://github.com/dennisonbertram/lgrep#readme",
+  "bugs": {
+    "url": "https://github.com/dennisonbertram/lgrep/issues"
+  },
   "dependencies": {
     "@babel/parser": "^7.28.5",
     "@babel/traverse": "^7.28.5",
