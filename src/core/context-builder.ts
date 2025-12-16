@@ -4,6 +4,8 @@ import type { EmbeddingClient } from './embeddings.js';
 import type { CodeSymbol, CallEdge } from '../types/code-intel.js';
 import { searchChunks } from '../storage/lance.js';
 import { getSymbols, getCalls } from '../storage/code-intel.js';
+import { createSummarizerClient } from './summarizer.js';
+import { loadConfig } from '../storage/config.js';
 
 export interface ContextBuilderDeps {
   db: IndexDatabase;
@@ -20,7 +22,7 @@ export async function buildContext(
   options?: ContextOptions
 ): Promise<ContextPackage> {
   const { db, indexName, embeddingClient } = deps;
-  const { limit = 15, maxTokens = 32000, depth = 2 } = options ?? {};
+  const { limit = 15, maxTokens = 32000, depth = 2, generateApproach = false } = options ?? {};
 
   try {
     // 1. Embed task description
@@ -43,13 +45,25 @@ export async function buildContext(
     const scoredSymbols = scoreSymbols(expandedSymbols, taskVector);
 
     // 6. Build package within token budget
-    return buildPackageWithinBudget({
+    const contextPackage = buildPackageWithinBudget({
       task,
       indexName,
       files: scoredFiles.slice(0, limit),
       symbols: scoredSymbols,
       tokenBudget: maxTokens,
     });
+
+    // 7. Generate approach suggestions if requested
+    if (generateApproach) {
+      const approachSteps = await generateApproachSuggestions(
+        task,
+        contextPackage.keySymbols,
+        contextPackage.relevantFiles
+      );
+      contextPackage.suggestedApproach = approachSteps;
+    }
+
+    return contextPackage;
   } catch (error) {
     // Handle empty index or errors gracefully
     return {
@@ -304,4 +318,53 @@ function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   }
 
   return dotProduct / denominator;
+}
+
+/**
+ * Generate approach suggestions using the summarizer.
+ */
+async function generateApproachSuggestions(
+  task: string,
+  symbols: KeySymbol[],
+  files: RelevantFile[]
+): Promise<Array<{ step: number; description: string; targetFiles: string[] }>> {
+  try {
+    // Load config to get summarization model
+    const config = await loadConfig();
+
+    // Create summarizer client
+    const summarizer = createSummarizerClient({
+      model: config.summarizationModel,
+    });
+
+    // Check if summarizer is healthy
+    const health = await summarizer.healthCheck();
+    if (!health.healthy) {
+      // Silently return empty array if summarizer is not available
+      return [];
+    }
+
+    // Build context for approach suggestion
+    const approachContext = {
+      relevantSymbols: symbols.slice(0, 10).map(s => ({
+        name: s.name,
+        kind: s.kind,
+        summary: s.summary,
+      })),
+      relevantFiles: files.slice(0, 10).map(f => ({
+        path: f.relativePath,
+        symbols: symbols
+          .filter(s => s.file === f.relativePath)
+          .map(s => s.name),
+      })),
+    };
+
+    // Get approach suggestions from summarizer
+    const steps = await summarizer.suggestApproach(task, approachContext);
+    return steps;
+  } catch (error) {
+    // Silently fail and return empty array
+    // This ensures the context builder doesn't break if summarizer fails
+    return [];
+  }
 }

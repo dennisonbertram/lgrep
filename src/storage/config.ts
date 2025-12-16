@@ -20,7 +20,18 @@ export interface LgrepConfig {
   excludes: string[];
   /** Patterns for secret files to exclude */
   secretExcludes: string[];
-  /** Model to use for code summarization */
+  /**
+   * Model to use for code summarization.
+   * Format: 'auto' | 'provider:model'
+   *
+   * - 'auto': Auto-detect best available provider based on API keys
+   *   Priority: Groq > Anthropic > OpenAI > Ollama (local fallback)
+   *
+   * - 'groq:llama-3.1-8b-instant': Use Groq with specific model
+   * - 'anthropic:claude-3-5-haiku-latest': Use Anthropic Claude
+   * - 'openai:gpt-4o-mini': Use OpenAI GPT
+   * - 'ollama:llama3.2:3b': Use local Ollama (default fallback)
+   */
   summarizationModel: string;
   /** Whether to enable automatic code summarization */
   enableSummarization: boolean;
@@ -48,7 +59,7 @@ export const DEFAULT_CONFIG: LgrepConfig = {
   maxFileSize: 5 * 1024 * 1024, // 5MB
   excludes: [...DEFAULT_EXCLUDES],
   secretExcludes: [...DEFAULT_SECRET_EXCLUDES],
-  summarizationModel: 'llama3.2:3b',
+  summarizationModel: 'auto', // Auto-detect best available provider
   enableSummarization: true,
   maxSummaryLength: 100,
   contextMaxTokens: 32000,

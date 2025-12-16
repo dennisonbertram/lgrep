@@ -4,12 +4,84 @@ import { createSummarizerClient, type SummarizerClient } from './summarizer.js';
 // Mock fetch for all tests
 global.fetch = vi.fn();
 
+// Mock AI provider module
+vi.mock('./ai-provider.js', () => ({
+  createAIProvider: vi.fn(),
+  parseModelString: vi.fn((model: string) => {
+    const colonIndex = model.indexOf(':');
+    return {
+      provider: model.slice(0, colonIndex),
+      model: model.slice(colonIndex + 1),
+    };
+  }),
+  detectBestProvider: vi.fn(() => 'ollama:llama3.2:3b'),
+}));
+
 describe('SummarizerClient', () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
 
+  describe('model configuration', () => {
+    it('should handle auto model detection', async () => {
+      const { detectBestProvider } = await import('./ai-provider.js');
+      vi.mocked(detectBestProvider).mockReturnValueOnce('groq:llama-3.1-8b-instant');
+
+      // Mock Ollama response (since it will fallback to ollama for now)
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ message: { content: 'Test summary' } }),
+      } as Response);
+
+      const client = createSummarizerClient({ model: 'auto' });
+
+      await client.summarizeSymbol({
+        name: 'test',
+        kind: 'function',
+        code: 'function test() {}',
+      });
+
+      expect(detectBestProvider).toHaveBeenCalled();
+    });
+
+    it('should accept provider:model format', () => {
+      const client = createSummarizerClient({ model: 'groq:llama-3.1-8b-instant' });
+      expect(client.model).toBe('groq:llama-3.1-8b-instant');
+    });
+
+    it('should accept ollama:model format for backward compatibility', () => {
+      const client = createSummarizerClient({ model: 'ollama:llama3.2:3b' });
+      expect(client.model).toBe('ollama:llama3.2:3b');
+    });
+  });
+
   describe('summarizeSymbol', () => {
+    it('should use AI SDK provider for non-Ollama models', async () => {
+      const { createAIProvider } = await import('./ai-provider.js');
+
+      const mockProvider = {
+        generateText: vi.fn().mockResolvedValue('Uses Groq to generate summary'),
+        healthCheck: vi.fn().mockResolvedValue({ healthy: true, provider: 'groq' }),
+      };
+
+      vi.mocked(createAIProvider).mockReturnValueOnce(mockProvider);
+
+      const client = createSummarizerClient({ model: 'groq:llama-3.1-8b-instant' });
+
+      const summary = await client.summarizeSymbol({
+        name: 'testFunction',
+        kind: 'function',
+        code: 'function testFunction() { return true; }',
+      });
+
+      expect(createAIProvider).toHaveBeenCalledWith({
+        model: 'groq:llama-3.1-8b-instant',
+        timeout: 30000,
+      });
+      expect(mockProvider.generateText).toHaveBeenCalled();
+      expect(summary).toBe('Uses Groq to generate summary');
+    });
+
     it('should return a concise summary of a symbol', async () => {
       // Mock successful Ollama response
       vi.mocked(fetch).mockResolvedValueOnce({
@@ -22,7 +94,7 @@ describe('SummarizerClient', () => {
       } as Response);
 
       const client = createSummarizerClient({
-        model: 'llama3.2:3b',
+        model: 'ollama:llama3.2:3b',
         host: 'http://localhost:11434',
       });
 
@@ -54,7 +126,7 @@ describe('SummarizerClient', () => {
       } as Response);
 
       const client = createSummarizerClient({
-        model: 'llama3.2:3b',
+        model: 'ollama:llama3.2:3b',
         maxLength: 50,
       });
 
@@ -127,7 +199,7 @@ describe('SummarizerClient', () => {
       } as Response);
 
       const client = createSummarizerClient({
-        model: 'llama3.2:3b',
+        model: 'ollama:llama3.2:3b',
       });
 
       const health = await client.healthCheck();
@@ -148,7 +220,7 @@ describe('SummarizerClient', () => {
       } as Response);
 
       const client = createSummarizerClient({
-        model: 'llama3.2:3b',
+        model: 'ollama:llama3.2:3b',
       });
 
       const health = await client.healthCheck();

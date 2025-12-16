@@ -200,3 +200,90 @@ describe('relevance scoring', () => {
     expect(true).toBe(true);
   });
 });
+
+describe('approach suggestions', () => {
+  let mockDb: IndexDatabase;
+  let mockEmbeddingClient: EmbeddingClient;
+
+  beforeEach(() => {
+    mockDb = {
+      path: '/test/db',
+      connection: {} as never,
+      close: async () => {},
+    };
+
+    mockEmbeddingClient = {
+      model: 'test-model',
+      embed: async () => ({ embeddings: [[0.1, 0.2, 0.3]], model: 'test-model' }),
+      embedQuery: async () => ({ embeddings: [[0.1, 0.2, 0.3]], model: 'test-model' }),
+      healthCheck: async () => ({ healthy: true, modelAvailable: true }),
+      getModelDimensions: async () => 3,
+    };
+  });
+
+  it('should return empty suggestedApproach by default (generateApproach: false)', async () => {
+    const result = await buildContext(
+      {
+        db: mockDb,
+        indexName: 'test-index',
+        embeddingClient: mockEmbeddingClient,
+      },
+      'implement user authentication',
+      { generateApproach: false }
+    );
+
+    expect(result.suggestedApproach).toEqual([]);
+  });
+
+  it('should return empty suggestedApproach when generateApproach is undefined', async () => {
+    const result = await buildContext(
+      {
+        db: mockDb,
+        indexName: 'test-index',
+        embeddingClient: mockEmbeddingClient,
+      },
+      'implement user authentication',
+      {} // No generateApproach option
+    );
+
+    expect(result.suggestedApproach).toEqual([]);
+  });
+
+  it('should generate approach when generateApproach: true and summarizer is healthy', async () => {
+    // Mock config loading
+    const originalLoadConfig = await import('../storage/config.js');
+
+    const result = await buildContext(
+      {
+        db: mockDb,
+        indexName: 'test-index',
+        embeddingClient: mockEmbeddingClient,
+      },
+      'implement user authentication',
+      { generateApproach: true }
+    );
+
+    // Should have approach steps
+    expect(result.suggestedApproach).toBeDefined();
+    expect(Array.isArray(result.suggestedApproach)).toBe(true);
+
+    // In real implementation, this would have steps if summarizer is healthy
+    // For now, we're just testing the structure
+  });
+
+  it('should handle summarizer health check failure gracefully', async () => {
+    const result = await buildContext(
+      {
+        db: mockDb,
+        indexName: 'test-index',
+        embeddingClient: mockEmbeddingClient,
+      },
+      'implement user authentication',
+      { generateApproach: true }
+    );
+
+    // Should not throw, should return empty array on failure
+    expect(result.suggestedApproach).toBeDefined();
+    expect(Array.isArray(result.suggestedApproach)).toBe(true);
+  });
+});

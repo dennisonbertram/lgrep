@@ -1,6 +1,7 @@
 // Core exports
 export { chunkText, chunkCode, estimateTokens, type Chunk, type ChunkOptions } from './core/chunker.js';
 export { createEmbeddingClient, type EmbeddingClient, type EmbeddingResult, type HealthCheckResult } from './core/embeddings.js';
+export { createAIProvider, detectBestProvider, parseModelString, type AIProvider, type AIProviderConfig } from './core/ai-provider.js';
 export { hashContent, hashFile, createCacheKey } from './core/hash.js';
 export { walkFiles, shouldExclude, isBinaryFile, DEFAULT_EXCLUDES, DEFAULT_SECRET_EXCLUDES, type WalkResult, type WalkOptions } from './core/walker.js';
 

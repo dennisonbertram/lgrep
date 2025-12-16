@@ -48,6 +48,7 @@ export interface ContextOptions {
 export interface ApproachStep {
   step: number;
   description: string;
+  targetFiles: string[];
 }
 
 /**

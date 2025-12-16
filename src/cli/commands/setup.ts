@@ -40,7 +40,20 @@ export async function runSetupCommand(
     // Load config to get model names
     const config = await loadConfig();
     const embedModel = config.model;
-    const summarizationModel = skipSummarization ? undefined : config.summarizationModel;
+
+    // For setup, resolve 'auto' to the default Ollama model since we're setting up local
+    let summarizationModel: string | undefined;
+    if (!skipSummarization) {
+      if (config.summarizationModel === 'auto' || config.summarizationModel.startsWith('ollama:')) {
+        // Use the Ollama model for local setup
+        summarizationModel = config.summarizationModel === 'auto'
+          ? 'llama3.2:3b'
+          : config.summarizationModel.replace('ollama:', '');
+      } else {
+        // Non-Ollama provider configured, skip pulling summarization model
+        summarizationModel = undefined;
+      }
+    }
 
     // Step 1: Check if Ollama is installed
     onProgress?.('check-install', 'Checking Ollama installation...');

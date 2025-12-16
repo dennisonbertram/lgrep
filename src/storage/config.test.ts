@@ -49,8 +49,8 @@ describe('config management', () => {
       expect(DEFAULT_CONFIG.excludes).toContain('node_modules');
     });
 
-    it('should have default summarization model set to llama3.2:3b', () => {
-      expect(DEFAULT_CONFIG.summarizationModel).toBe('llama3.2:3b');
+    it('should have default summarization model set to auto', () => {
+      expect(DEFAULT_CONFIG.summarizationModel).toBe('auto');
     });
 
     it('should have summarization enabled by default', () => {

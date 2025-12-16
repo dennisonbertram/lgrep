@@ -1,10 +1,21 @@
+import { createAIProvider, parseModelString, detectBestProvider } from './ai-provider.js';
+
 /**
  * Configuration options for the summarizer client.
  */
 export interface SummarizerOptions {
-  /** Ollama model to use (default: 'llama3.2:3b') */
+  /**
+   * Model to use for summarization.
+   * Format: 'auto' | 'provider:model'
+   *
+   * - 'auto': Auto-detect best available provider (default)
+   * - 'ollama:llama3.2:3b': Use local Ollama
+   * - 'groq:llama-3.1-8b-instant': Use Groq
+   * - 'anthropic:claude-3-5-haiku-latest': Use Anthropic
+   * - 'openai:gpt-4o-mini': Use OpenAI
+   */
   model?: string;
-  /** Ollama host URL (default: 'http://localhost:11434') */
+  /** Ollama host URL (default: 'http://localhost:11434') - only used for Ollama provider */
   host?: string;
   /** Maximum summary length in characters (default: 100) */
   maxLength?: number;
@@ -97,7 +108,7 @@ export interface SummarizerClient {
  * Default options for the summarizer.
  */
 const DEFAULT_OPTIONS: Required<SummarizerOptions> = {
-  model: 'llama3.2:3b',
+  model: 'auto',
   host: 'http://localhost:11434',
   maxLength: 100,
   timeout: 30000,
@@ -111,10 +122,20 @@ export function createSummarizerClient(
 ): SummarizerClient {
   const config = { ...DEFAULT_OPTIONS, ...options };
 
+  // Resolve 'auto' to actual provider
+  const resolvedModel = config.model === 'auto' ? detectBestProvider() : config.model;
+  const { provider, model } = parseModelString(resolvedModel);
+
+  // Create AI provider for non-Ollama models
+  const aiProvider = provider !== 'ollama' ? createAIProvider({
+    model: resolvedModel,
+    timeout: config.timeout,
+  }) : null;
+
   /**
    * Make a request to Ollama chat API with timeout.
    */
-  async function chatRequest(prompt: string): Promise<string> {
+  async function ollamaChatRequest(prompt: string): Promise<string> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), config.timeout);
 
@@ -123,7 +144,7 @@ export function createSummarizerClient(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: config.model,
+          model,
           messages: [{ role: 'user', content: prompt }],
           stream: false,
         }),
@@ -152,6 +173,16 @@ export function createSummarizerClient(
   }
 
   /**
+   * Make a request using either AI SDK provider or Ollama.
+   */
+  async function chatRequest(prompt: string): Promise<string> {
+    if (aiProvider) {
+      return aiProvider.generateText(prompt);
+    }
+    return ollamaChatRequest(prompt);
+  }
+
+  /**
    * Truncate text to maximum length.
    */
   function truncate(text: string, maxLen: number): string {
@@ -162,7 +193,7 @@ export function createSummarizerClient(
   }
 
   return {
-    model: config.model,
+    model: resolvedModel,
 
     async summarizeSymbol(symbol: SymbolInfo): Promise<string> {
       const prompt = `Summarize what this ${symbol.kind} does in ONE concise sentence (max ${config.maxLength} chars).
@@ -229,6 +260,20 @@ Return ONLY a JSON array of steps, no other text:`;
     },
 
     async healthCheck(): Promise<HealthCheckResult> {
+      // For non-Ollama providers, use the AI provider's health check
+      if (aiProvider) {
+        try {
+          const result = await aiProvider.healthCheck();
+          return {
+            healthy: result.healthy,
+            modelAvailable: result.healthy, // For AI SDK providers, if healthy, model is available
+          };
+        } catch {
+          return { healthy: false, modelAvailable: false };
+        }
+      }
+
+      // For Ollama, check service and model availability
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), config.timeout);
@@ -248,7 +293,7 @@ Return ONLY a JSON array of steps, no other text:`;
           models?: Array<{ name: string }>;
         };
         const models = data.models || [];
-        const modelAvailable = models.some((m) => m.name === config.model);
+        const modelAvailable = models.some((m) => m.name === model);
 
         return { healthy: true, modelAvailable };
       } catch (error) {

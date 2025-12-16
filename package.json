@@ -39,10 +39,14 @@
     "url": "https://github.com/dennisonbertram/lgrep/issues"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.56",
+    "@ai-sdk/groq": "^2.0.33",
+    "@ai-sdk/openai": "^2.0.87",
     "@babel/parser": "^7.28.5",
     "@babel/traverse": "^7.28.5",
     "@babel/types": "^7.28.5",
     "@lancedb/lancedb": "^0.13.0",
+    "ai": "^5.0.113",
     "chalk": "^5.3.0",
     "chokidar": "^5.0.0",
     "commander": "^12.1.0",
