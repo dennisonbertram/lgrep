@@ -3,9 +3,9 @@ import { dirname } from 'node:path';
 import { getConfigPath } from '../cli/utils/paths.js';
 
 /**
- * Configuration schema for mgrep.
+ * Configuration schema for lgrep.
  */
-export interface MgrepConfig {
+export interface LgrepConfig {
   /** Default embedding model to use */
   model: string;
   /** Target chunk size in tokens */
@@ -35,7 +35,7 @@ export interface MgrepConfig {
 /**
  * Default configuration values.
  */
-export const DEFAULT_CONFIG: MgrepConfig = {
+export const DEFAULT_CONFIG: LgrepConfig = {
   model: 'mxbai-embed-large',
   chunkSize: 500,
   chunkOverlap: 50,
@@ -80,12 +80,12 @@ export const DEFAULT_CONFIG: MgrepConfig = {
 /**
  * Load configuration from file, merging with defaults.
  */
-export async function loadConfig(): Promise<MgrepConfig> {
+export async function loadConfig(): Promise<LgrepConfig> {
   const configPath = getConfigPath();
 
   try {
     const content = await readFile(configPath, 'utf-8');
-    const parsed = JSON.parse(content) as Partial<MgrepConfig>;
+    const parsed = JSON.parse(content) as Partial<LgrepConfig>;
 
     // Merge with defaults (parsed values override defaults)
     return {
@@ -105,7 +105,7 @@ export async function loadConfig(): Promise<MgrepConfig> {
 /**
  * Save configuration to file.
  */
-export async function saveConfig(config: MgrepConfig): Promise<void> {
+export async function saveConfig(config: LgrepConfig): Promise<void> {
   const configPath = getConfigPath();
 
   // Ensure directory exists
@@ -119,9 +119,9 @@ export async function saveConfig(config: MgrepConfig): Promise<void> {
 /**
  * Get a specific configuration value.
  */
-export async function getConfigValue<K extends keyof MgrepConfig>(
+export async function getConfigValue<K extends keyof LgrepConfig>(
   key: K
-): Promise<MgrepConfig[K]> {
+): Promise<LgrepConfig[K]> {
   const config = await loadConfig();
   return config[key];
 }
@@ -129,9 +129,9 @@ export async function getConfigValue<K extends keyof MgrepConfig>(
 /**
  * Set a specific configuration value.
  */
-export async function setConfigValue<K extends keyof MgrepConfig>(
+export async function setConfigValue<K extends keyof LgrepConfig>(
   key: K,
-  value: MgrepConfig[K]
+  value: LgrepConfig[K]
 ): Promise<void> {
   const config = await loadConfig();
   config[key] = value;

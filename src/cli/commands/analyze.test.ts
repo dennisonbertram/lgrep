@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 
 describe('runAnalyzeCommand', () => {
   it('should analyze a directory and return results', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     await writeFile(join(tmpDir, 'test.ts'), 'export function hello() {}');
 
@@ -27,7 +27,7 @@ describe('runAnalyzeCommand', () => {
   });
 
   it('should return symbols when --symbols flag is set', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     await writeFile(join(tmpDir, 'test.ts'), 'export function greet() {}');
 
@@ -44,7 +44,7 @@ describe('runAnalyzeCommand', () => {
   });
 
   it('should return dependencies when --deps flag is set', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     await writeFile(
       join(tmpDir, 'test.ts'),
@@ -63,7 +63,7 @@ describe('runAnalyzeCommand', () => {
   });
 
   it('should return calls when --calls flag is set', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     await writeFile(
       join(tmpDir, 'test.ts'),
@@ -82,7 +82,7 @@ describe('runAnalyzeCommand', () => {
   });
 
   it('should analyze single file when --file is provided', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     await writeFile(join(tmpDir, 'target.ts'), 'export function target() {}');
     await writeFile(join(tmpDir, 'other.ts'), 'export function other() {}');
@@ -98,7 +98,7 @@ describe('runAnalyzeCommand', () => {
   });
 
   it('should support --json flag', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     await writeFile(join(tmpDir, 'test.ts'), 'export function test() {}');
 
@@ -126,7 +126,7 @@ describe('runAnalyzeCommand', () => {
   });
 
   it('should combine multiple flags', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     await writeFile(
       join(tmpDir, 'test.ts'),

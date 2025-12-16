@@ -35,12 +35,12 @@ describe('CLI - index command flags', () => {
   let cliPath: string;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-cli-flags-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-cli-flags-test-${randomUUID()}`);
     sourceDir = join(testDir, 'source');
     await mkdir(sourceDir, { recursive: true });
 
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
 
     // Create test files
     await writeFile(join(sourceDir, 'file1.txt'), 'Initial content for file one.');
@@ -61,14 +61,14 @@ describe('CLI - index command flags', () => {
       // First index should succeed
       const { stdout: stdout1 } = await execAsync(
         `node "${cliPath}" index "${sourceDir}" --name test-index`,
-        { env: { ...process.env, MGREP_HOME: testDir } }
+        { env: { ...process.env, LGREP_HOME: testDir } }
       );
       expect(stdout1).toContain('test-index');
 
       // Second index without --update should fail
       await expect(
         execAsync(`node "${cliPath}" index "${sourceDir}" --name test-index`, {
-          env: { ...process.env, MGREP_HOME: testDir },
+          env: { ...process.env, LGREP_HOME: testDir },
         })
       ).rejects.toThrow(/already exists/);
     });
@@ -76,13 +76,13 @@ describe('CLI - index command flags', () => {
     it('should succeed when running index twice with --update flag', async () => {
       // First index
       await execAsync(`node "${cliPath}" index "${sourceDir}" --name update-test`, {
-        env: { ...process.env, MGREP_HOME: testDir },
+        env: { ...process.env, LGREP_HOME: testDir },
       });
 
       // Second index with --update should succeed
       const { stdout } = await execAsync(
         `node "${cliPath}" index "${sourceDir}" --name update-test --update`,
-        { env: { ...process.env, MGREP_HOME: testDir } }
+        { env: { ...process.env, LGREP_HOME: testDir } }
       );
 
       expect(stdout).toContain('Updated');
@@ -92,13 +92,13 @@ describe('CLI - index command flags', () => {
     it('should report unchanged files when using --update', async () => {
       // Initial index
       await execAsync(`node "${cliPath}" index "${sourceDir}" --name stats-test`, {
-        env: { ...process.env, MGREP_HOME: testDir },
+        env: { ...process.env, LGREP_HOME: testDir },
       });
 
       // Reindex with --update (no changes)
       const { stdout } = await execAsync(
         `node "${cliPath}" index "${sourceDir}" --name stats-test --update`,
-        { env: { ...process.env, MGREP_HOME: testDir } }
+        { env: { ...process.env, LGREP_HOME: testDir } }
       );
 
       expect(stdout).toContain('unchanged');
@@ -107,7 +107,7 @@ describe('CLI - index command flags', () => {
     it('should detect and report changed files with --update', async () => {
       // Initial index
       await execAsync(`node "${cliPath}" index "${sourceDir}" --name change-test`, {
-        env: { ...process.env, MGREP_HOME: testDir },
+        env: { ...process.env, LGREP_HOME: testDir },
       });
 
       // Modify a file
@@ -116,7 +116,7 @@ describe('CLI - index command flags', () => {
       // Reindex with --update
       const { stdout } = await execAsync(
         `node "${cliPath}" index "${sourceDir}" --name change-test --update`,
-        { env: { ...process.env, MGREP_HOME: testDir } }
+        { env: { ...process.env, LGREP_HOME: testDir } }
       );
 
       expect(stdout).toContain('updated');
@@ -125,7 +125,7 @@ describe('CLI - index command flags', () => {
     it('should fail with --update when index does not exist', async () => {
       await expect(
         execAsync(`node "${cliPath}" index "${sourceDir}" --name nonexistent --update`, {
-          env: { ...process.env, MGREP_HOME: testDir },
+          env: { ...process.env, LGREP_HOME: testDir },
         })
       ).rejects.toThrow(/does not exist/);
     });
@@ -136,14 +136,14 @@ describe('CLI - index command flags', () => {
       // Initial index
       const { stdout: stdout1 } = await execAsync(
         `node "${cliPath}" index "${sourceDir}" --name force-test`,
-        { env: { ...process.env, MGREP_HOME: testDir } }
+        { env: { ...process.env, LGREP_HOME: testDir } }
       );
       expect(stdout1).toContain('Created index');
 
       // Reindex with --force should succeed and recreate
       const { stdout: stdout2 } = await execAsync(
         `node "${cliPath}" index "${sourceDir}" --name force-test --force`,
-        { env: { ...process.env, MGREP_HOME: testDir } }
+        { env: { ...process.env, LGREP_HOME: testDir } }
       );
       expect(stdout2).toContain('Created index');
     });
@@ -152,7 +152,7 @@ describe('CLI - index command flags', () => {
       // Should create new index (--force is ignored if index doesn't exist)
       const { stdout } = await execAsync(
         `node "${cliPath}" index "${sourceDir}" --name new-force --force`,
-        { env: { ...process.env, MGREP_HOME: testDir } }
+        { env: { ...process.env, LGREP_HOME: testDir } }
       );
       expect(stdout).toContain('Created index');
     });
@@ -160,13 +160,13 @@ describe('CLI - index command flags', () => {
     it('should reprocess all files when using --force (not incremental)', async () => {
       // Initial index
       await execAsync(`node "${cliPath}" index "${sourceDir}" --name reprocess-test`, {
-        env: { ...process.env, MGREP_HOME: testDir },
+        env: { ...process.env, LGREP_HOME: testDir },
       });
 
       // Reindex with --force (should not show "unchanged" stats)
       const { stdout } = await execAsync(
         `node "${cliPath}" index "${sourceDir}" --name reprocess-test --force`,
-        { env: { ...process.env, MGREP_HOME: testDir } }
+        { env: { ...process.env, LGREP_HOME: testDir } }
       );
 
       // Force mode should show "Created" not "Updated"
@@ -178,13 +178,13 @@ describe('CLI - index command flags', () => {
   describe('flag conflicts', () => {
     it('should fail when both --update and --force are provided', async () => {
       await execAsync(`node "${cliPath}" index "${sourceDir}" --name conflict-test`, {
-        env: { ...process.env, MGREP_HOME: testDir },
+        env: { ...process.env, LGREP_HOME: testDir },
       });
 
       await expect(
         execAsync(
           `node "${cliPath}" index "${sourceDir}" --name conflict-test --update --force`,
-          { env: { ...process.env, MGREP_HOME: testDir } }
+          { env: { ...process.env, LGREP_HOME: testDir } }
         )
       ).rejects.toThrow(/cannot use both --update and --force/i);
     });
@@ -194,13 +194,13 @@ describe('CLI - index command flags', () => {
     it('should output JSON format with --update and --json flags', async () => {
       // Initial index
       await execAsync(`node "${cliPath}" index "${sourceDir}" --name json-test --json`, {
-        env: { ...process.env, MGREP_HOME: testDir },
+        env: { ...process.env, LGREP_HOME: testDir },
       });
 
       // Reindex with --update and --json
       const { stdout } = await execAsync(
         `node "${cliPath}" index "${sourceDir}" --name json-test --update --json`,
-        { env: { ...process.env, MGREP_HOME: testDir } }
+        { env: { ...process.env, LGREP_HOME: testDir } }
       );
 
       const result = JSON.parse(stdout);
@@ -212,13 +212,13 @@ describe('CLI - index command flags', () => {
     it('should output JSON format with --force and --json flags', async () => {
       // Initial index
       await execAsync(`node "${cliPath}" index "${sourceDir}" --name json-force --json`, {
-        env: { ...process.env, MGREP_HOME: testDir },
+        env: { ...process.env, LGREP_HOME: testDir },
       });
 
       // Reindex with --force and --json
       const { stdout } = await execAsync(
         `node "${cliPath}" index "${sourceDir}" --name json-force --force --json`,
-        { env: { ...process.env, MGREP_HOME: testDir } }
+        { env: { ...process.env, LGREP_HOME: testDir } }
       );
 
       const result = JSON.parse(stdout);

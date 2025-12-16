@@ -34,12 +34,12 @@ describe('search command', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-search-cmd-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-search-cmd-test-${randomUUID()}`);
     sourceDir = join(testDir, 'source');
     await mkdir(sourceDir, { recursive: true });
 
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
 
     // Create test files with different content for variety
     await writeFile(

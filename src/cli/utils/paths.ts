@@ -2,18 +2,18 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 /**
- * Get the mgrep home directory based on platform conventions.
+ * Get the lgrep home directory based on platform conventions.
  *
  * Priority:
- * 1. MGREP_HOME environment variable (override)
+ * 1. LGREP_HOME environment variable (override)
  * 2. Platform-specific:
- *    - Linux: $XDG_DATA_HOME/mgrep or ~/.local/share/mgrep
- *    - macOS: ~/Library/Application Support/mgrep
- *    - Windows: %APPDATA%/mgrep
+ *    - Linux: $XDG_DATA_HOME/lgrep or ~/.local/share/lgrep
+ *    - macOS: ~/Library/Application Support/lgrep
+ *    - Windows: %APPDATA%/lgrep
  */
-export function getMgrepHome(): string {
+export function getLgrepHome(): string {
   // Allow override via environment variable
-  const envHome = process.env['MGREP_HOME'];
+  const envHome = process.env['LGREP_HOME'];
   if (envHome) {
     return envHome;
   }
@@ -23,25 +23,25 @@ export function getMgrepHome(): string {
 
   switch (platform) {
     case 'darwin':
-      // macOS: ~/Library/Application Support/mgrep
-      return join(home, 'Library', 'Application Support', 'mgrep');
+      // macOS: ~/Library/Application Support/lgrep
+      return join(home, 'Library', 'Application Support', 'lgrep');
 
     case 'win32':
-      // Windows: %APPDATA%/mgrep
+      // Windows: %APPDATA%/lgrep
       const appData = process.env['APPDATA'];
       if (appData) {
-        return join(appData, 'mgrep');
+        return join(appData, 'lgrep');
       }
       // Fallback for Windows if APPDATA not set
-      return join(home, 'AppData', 'Roaming', 'mgrep');
+      return join(home, 'AppData', 'Roaming', 'lgrep');
 
     default:
       // Linux and others: XDG_DATA_HOME or ~/.local/share
       const xdgDataHome = process.env['XDG_DATA_HOME'];
       if (xdgDataHome) {
-        return join(xdgDataHome, 'mgrep');
+        return join(xdgDataHome, 'lgrep');
       }
-      return join(home, '.local', 'share', 'mgrep');
+      return join(home, '.local', 'share', 'lgrep');
   }
 }
 
@@ -49,21 +49,21 @@ export function getMgrepHome(): string {
  * Get the path to the database directory.
  */
 export function getDbPath(): string {
-  return join(getMgrepHome(), 'db');
+  return join(getLgrepHome(), 'db');
 }
 
 /**
  * Get the path to the config file.
  */
 export function getConfigPath(): string {
-  return join(getMgrepHome(), 'config.json');
+  return join(getLgrepHome(), 'config.json');
 }
 
 /**
  * Get the path to the cache directory.
  */
 export function getCachePath(): string {
-  return join(getMgrepHome(), 'cache');
+  return join(getLgrepHome(), 'cache');
 }
 
 /**

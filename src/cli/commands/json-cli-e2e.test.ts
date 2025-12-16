@@ -37,12 +37,12 @@ describe('JSON CLI End-to-End Tests', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-json-e2e-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-json-e2e-${randomUUID()}`);
     sourceDir = join(testDir, 'source');
     await mkdir(sourceDir, { recursive: true });
 
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
 
     await writeFile(join(sourceDir, 'test.ts'), 'function hello() { return "world"; }');
   });

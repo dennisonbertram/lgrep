@@ -120,7 +120,7 @@ $ npm run type-check && npm run build && npm test -- symbol-extractor.test.ts
 
 ## 🔗 Related Files
 
-- `/Users/dennisonbertram/Documents/local-mgrep/src/core/chunker.ts:629-780` - Referenced for Babel patterns
+- `/Users/dennisonbertram/Documents/local-lgrep/src/core/chunker.ts:629-780` - Referenced for Babel patterns
 - Babel dependencies already installed in package.json
 
 ## ✨ Ready for Phase 2

@@ -1,19 +1,19 @@
-# Progress Indicators Implementation for mgrep CLI
+# Progress Indicators Implementation for lgrep CLI
 
 ## Summary
 
-Successfully implemented ora spinners for long-running operations in the mgrep CLI using Test-Driven Development (TDD). All tests pass.
+Successfully implemented ora spinners for long-running operations in the lgrep CLI using Test-Driven Development (TDD). All tests pass.
 
 ## Files Created
 
-### 1. `/Users/dennisonbertram/Documents/local-mgrep/src/cli/utils/progress.ts`
+### 1. `/Users/dennisonbertram/Documents/local-lgrep/src/cli/utils/progress.ts`
 - Created a spinner abstraction with automatic TTY detection
 - Provides `createSpinner()` function that returns a consistent interface
 - In TTY mode: uses ora with cyan color and animated spinners
 - In non-TTY mode: falls back to simple console output for CI/pipes
 - Exports `Spinner` interface with methods: start, stop, succeed, fail, update
 
-### 2. `/Users/dennisonbertram/Documents/local-mgrep/src/cli/utils/progress.test.ts`
+### 2. `/Users/dennisonbertram/Documents/local-lgrep/src/cli/utils/progress.test.ts`
 - Comprehensive test suite with 11 tests
 - Tests TTY mode behavior
 - Tests non-TTY fallback behavior
@@ -22,7 +22,7 @@ Successfully implemented ora spinners for long-running operations in the mgrep C
 
 ## Files Modified
 
-### 1. `/Users/dennisonbertram/Documents/local-mgrep/src/cli/commands/index.ts`
+### 1. `/Users/dennisonbertram/Documents/local-lgrep/src/cli/commands/index.ts`
 **Changes:**
 - Added `showProgress?: boolean` to `IndexOptions` interface (defaults to `true`)
 - Imported `createSpinner` from progress utility
@@ -42,7 +42,7 @@ Successfully implemented ora spinners for long-running operations in the mgrep C
 - Added 4 new tests for progress indicators
 - All 15 tests in index.test.ts passing
 
-### 2. `/Users/dennisonbertram/Documents/local-mgrep/src/cli/commands/search.ts`
+### 2. `/Users/dennisonbertram/Documents/local-lgrep/src/cli/commands/search.ts`
 **Changes:**
 - Added `showProgress?: boolean` to `SearchOptions` interface (defaults to `true`)
 - Added `json?: boolean` to `SearchOptions` interface
@@ -114,7 +114,7 @@ Tests  39 passed (39)
 ## Known Issues
 
 ### Build Errors (Pre-existing, Unrelated to Progress Indicators)
-The TypeScript build is currently failing due to pre-existing type errors in `/Users/dennisonbertram/Documents/local-mgrep/src/storage/lance.ts`:
+The TypeScript build is currently failing due to pre-existing type errors in `/Users/dennisonbertram/Documents/local-lgrep/src/storage/lance.ts`:
 - Lines 496-498: Object is possibly 'undefined' in cosine similarity calculation
 - Lines 554, 559, 573: Candidate is possibly 'undefined' in MMR reranking
 
@@ -168,16 +168,16 @@ The progress indicators are now integrated into the command functions. To fully 
 Example CLI commands (once CLI flags are wired):
 ```bash
 # With progress (default)
-mgrep index /path/to/source --name my-index
+lgrep index /path/to/source --name my-index
 
 # Without progress
-mgrep index /path/to/source --name my-index --no-progress
+lgrep index /path/to/source --name my-index --no-progress
 
 # Search with progress
-mgrep search "authentication" --index my-index
+lgrep search "authentication" --index my-index
 
 # JSON output (auto-disables progress)
-mgrep search "authentication" --index my-index --json
+lgrep search "authentication" --index my-index --json
 ```
 
 ## Dependencies

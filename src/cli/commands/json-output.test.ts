@@ -37,12 +37,12 @@ describe('JSON output flag', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-json-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-json-test-${randomUUID()}`);
     sourceDir = join(testDir, 'source');
     await mkdir(sourceDir, { recursive: true });
 
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
 
     // Create test files
     await writeFile(

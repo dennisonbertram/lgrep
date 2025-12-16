@@ -17,7 +17,7 @@ describe('embedding cache', () => {
   let cache: EmbeddingCache;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-cache-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-cache-test-${randomUUID()}`);
     await mkdir(testDir, { recursive: true });
     cache = await openEmbeddingCache(testDir);
   });

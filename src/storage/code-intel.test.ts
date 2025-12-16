@@ -30,7 +30,7 @@ describe('code-intel storage', () => {
   const indexName = 'test-index';
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-code-intel-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-code-intel-test-${randomUUID()}`);
     await mkdir(testDir, { recursive: true });
     db = await openDatabase(testDir);
   });

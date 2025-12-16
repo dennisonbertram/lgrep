@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mgrep SessionStart hook
+# lgrep SessionStart hook
 # Auto-starts watcher for current directory if not already running
 
 set -e
@@ -7,14 +7,14 @@ set -e
 # Get current directory from stdin (passed by Claude Code)
 CWD=$(pwd)
 
-# Check if mgrep is installed
-if ! command -v mgrep &> /dev/null; then
-  # Silent exit - mgrep not installed
+# Check if lgrep is installed
+if ! command -v lgrep &> /dev/null; then
+  # Silent exit - lgrep not installed
   exit 0
 fi
 
 # Get list of watchers
-WATCHERS=$(mgrep list --json 2>/dev/null || echo '{"indexes":[]}')
+WATCHERS=$(lgrep list --json 2>/dev/null || echo '{"indexes":[]}')
 
 # Check if current directory is already being watched
 IS_WATCHING=$(echo "$WATCHERS" | jq -r --arg cwd "$CWD" '.indexes[] | select(.path == $cwd) | .name' | head -1)
@@ -36,6 +36,6 @@ if [ -n "$NAME_EXISTS" ]; then
 fi
 
 # Start watcher (silently)
-mgrep watch "$CWD" --name "$INDEX_NAME" --json &> /dev/null || true
+lgrep watch "$CWD" --name "$INDEX_NAME" --json &> /dev/null || true
 
 exit 0

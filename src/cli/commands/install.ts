@@ -29,7 +29,7 @@ export interface InstallResult {
   hookAlreadyExists?: boolean;
   settingsPath?: string;
   projectClaudeUpdated: boolean;
-  projectClaudeAlreadyHasMgrep?: boolean;
+  projectClaudeAlreadyHasLgrep?: boolean;
   projectClaudePath?: string;
 }
 
@@ -81,10 +81,10 @@ async function loadTemplate(name: string): Promise<string> {
 }
 
 /**
- * Create the mgrep skill.
+ * Create the lgrep skill.
  */
 async function createSkill(homedir: string): Promise<{ created: boolean; alreadyExists: boolean; path: string }> {
-  const skillDir = path.join(homedir, '.claude', 'skills', 'mgrep-search');
+  const skillDir = path.join(homedir, '.claude', 'skills', 'lgrep-search');
   const skillPath = path.join(skillDir, 'SKILL.md');
 
   // Check if skill already exists
@@ -109,7 +109,7 @@ async function addSessionStartHook(homedir: string): Promise<{ added: boolean; a
   const claudeDir = path.join(homedir, '.claude');
   const settingsPath = path.join(claudeDir, 'settings.json');
   const hooksDir = path.join(claudeDir, 'hooks');
-  const hookScriptPath = path.join(hooksDir, 'mgrep-check.sh');
+  const hookScriptPath = path.join(hooksDir, 'lgrep-check.sh');
 
   // Ensure .claude directory exists
   await fs.mkdir(claudeDir, { recursive: true });
@@ -137,7 +137,7 @@ async function addSessionStartHook(homedir: string): Promise<{ added: boolean; a
   // Check if hook already exists in any SessionStart entry
   const hookExists = settings.hooks.SessionStart.some((entry) =>
     entry.hooks.some((hook) =>
-      hook.command === '~/.claude/hooks/mgrep-check.sh' || hook.command.includes('mgrep-check.sh')
+      hook.command === '~/.claude/hooks/lgrep-check.sh' || hook.command.includes('lgrep-check.sh')
     )
   );
 
@@ -146,7 +146,7 @@ async function addSessionStartHook(homedir: string): Promise<{ added: boolean; a
   }
 
   // Create hook script
-  const hookScript = await loadTemplate('mgrep-check.sh');
+  const hookScript = await loadTemplate('lgrep-check.sh');
   await fs.writeFile(hookScriptPath, hookScript, { mode: 0o755 });
 
   // Find or create the matcher entry
@@ -163,7 +163,7 @@ async function addSessionStartHook(homedir: string): Promise<{ added: boolean; a
   // Add the hook to the matcher entry
   matcherEntry.hooks.push({
     type: 'command',
-    command: '~/.claude/hooks/mgrep-check.sh',
+    command: '~/.claude/hooks/lgrep-check.sh',
     timeout: 10,
   });
 
@@ -174,9 +174,9 @@ async function addSessionStartHook(homedir: string): Promise<{ added: boolean; a
 }
 
 /**
- * Add mgrep section to project CLAUDE.md.
+ * Add lgrep section to project CLAUDE.md.
  */
-async function updateProjectClaudeMd(): Promise<{ updated: boolean; alreadyHasMgrep: boolean; path: string }> {
+async function updateProjectClaudeMd(): Promise<{ updated: boolean; alreadyHasLgrep: boolean; path: string }> {
   const cwd = process.cwd();
   const claudeMdPath = path.join(cwd, 'CLAUDE.md');
 
@@ -185,23 +185,23 @@ async function updateProjectClaudeMd(): Promise<{ updated: boolean; alreadyHasMg
     // Create new CLAUDE.md
     const section = await loadTemplate('claude-md-section.md');
     await fs.writeFile(claudeMdPath, `# Project Configuration\n\n${section}\n`);
-    return { updated: true, alreadyHasMgrep: false, path: claudeMdPath };
+    return { updated: true, alreadyHasLgrep: false, path: claudeMdPath };
   }
 
   // Read existing content
   const content = await fs.readFile(claudeMdPath, 'utf-8');
 
-  // Check if mgrep section already exists
-  if (content.includes('## mgrep') || content.includes('# mgrep')) {
-    return { updated: false, alreadyHasMgrep: true, path: claudeMdPath };
+  // Check if lgrep section already exists
+  if (content.includes('## lgrep') || content.includes('# lgrep')) {
+    return { updated: false, alreadyHasLgrep: true, path: claudeMdPath };
   }
 
-  // Append mgrep section
+  // Append lgrep section
   const section = await loadTemplate('claude-md-section.md');
   const newContent = `${content}\n\n${section}\n`;
   await fs.writeFile(claudeMdPath, newContent);
 
-  return { updated: true, alreadyHasMgrep: false, path: claudeMdPath };
+  return { updated: true, alreadyHasLgrep: false, path: claudeMdPath };
 }
 
 /**
@@ -242,7 +242,7 @@ export async function runInstallCommand(
     if (addToProject) {
       const claudeMdResult = await updateProjectClaudeMd();
       result.projectClaudeUpdated = claudeMdResult.updated;
-      result.projectClaudeAlreadyHasMgrep = claudeMdResult.alreadyHasMgrep;
+      result.projectClaudeAlreadyHasLgrep = claudeMdResult.alreadyHasLgrep;
       result.projectClaudePath = claudeMdResult.path;
     }
 

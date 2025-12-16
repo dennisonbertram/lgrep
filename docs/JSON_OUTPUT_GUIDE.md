@@ -2,23 +2,23 @@
 
 ## Quick Start
 
-Add the `--json` or `-j` flag to any mgrep command to get machine-readable JSON output.
+Add the `--json` or `-j` flag to any lgrep command to get machine-readable JSON output.
 
 ```bash
 # Search with JSON output
-mgrep search "query" --index my-index --json
+lgrep search "query" --index my-index --json
 
 # Index with JSON output
-mgrep index ./src --name my-index -j
+lgrep index ./src --name my-index -j
 
 # List indexes as JSON
-mgrep list -j
+lgrep list -j
 
 # Delete index with JSON
-mgrep delete my-index --json
+lgrep delete my-index --json
 
 # Get config as JSON
-mgrep config -j
+lgrep config -j
 ```
 
 ## Use Cases
@@ -29,7 +29,7 @@ Parse search results programmatically:
 
 ```bash
 #!/bin/bash
-RESULTS=$(mgrep search "TODO" --index myproject --json)
+RESULTS=$(lgrep search "TODO" --index myproject --json)
 COUNT=$(echo "$RESULTS" | jq '.count')
 
 if [ "$COUNT" -gt 0 ]; then
@@ -44,7 +44,7 @@ Check for prohibited patterns:
 
 ```bash
 # Find hardcoded credentials
-mgrep search "password" --index src --json | \
+lgrep search "password" --index src --json | \
   jq '.results[] | select(.score > 0.8) | .file' | \
   while read file; do
     echo "::error file=$file::Possible hardcoded credential"
@@ -57,7 +57,7 @@ Export search results for analysis:
 
 ```bash
 # Search and save to file
-mgrep search "deprecated" --index codebase --json > deprecated.json
+lgrep search "deprecated" --index codebase --json > deprecated.json
 
 # Analyze with jq
 cat deprecated.json | jq '[.results[] | {file: .file, line: .line, score: .score}]'
@@ -69,7 +69,7 @@ Track index status:
 
 ```bash
 # Get index stats
-INDEXES=$(mgrep list --json)
+INDEXES=$(lgrep list --json)
 CHUNK_COUNT=$(echo "$INDEXES" | jq '[.indexes[].chunks] | add')
 
 if [ "$CHUNK_COUNT" -lt 100 ]; then
@@ -202,18 +202,18 @@ fi
 
 ```bash
 # Extract file paths from search results
-mgrep search "bug" -i project --json | jq -r '.results[].file'
+lgrep search "bug" -i project --json | jq -r '.results[].file'
 
 # Get top 3 results by score
-mgrep search "important" -i project --json | \
+lgrep search "important" -i project --json | \
   jq '.results | sort_by(-.score) | .[0:3]'
 
 # Count results by file
-mgrep search "function" -i project --json | \
+lgrep search "function" -i project --json | \
   jq -r '.results[].file' | sort | uniq -c
 
 # Filter by score threshold
-mgrep search "critical" -i project --json | \
+lgrep search "critical" -i project --json | \
   jq '.results[] | select(.score > 0.8)'
 ```
 
@@ -223,9 +223,9 @@ mgrep search "critical" -i project --json | \
 import json
 import subprocess
 
-# Run mgrep and parse JSON
+# Run lgrep and parse JSON
 result = subprocess.run(
-    ['mgrep', 'search', 'TODO', '--index', 'src', '--json'],
+    ['lgrep', 'search', 'TODO', '--index', 'src', '--json'],
     capture_output=True,
     text=True
 )
@@ -243,9 +243,9 @@ for item in data['results']:
 ```javascript
 const { execSync } = require('child_process');
 
-// Run mgrep and parse JSON
+// Run lgrep and parse JSON
 const output = execSync(
-  'mgrep search "async" --index myproject --json',
+  'lgrep search "async" --index myproject --json',
   { encoding: 'utf8' }
 );
 
@@ -282,7 +282,7 @@ Both JSON and text modes use the same exit codes:
 
 ```bash
 # Find files with high-scoring matches
-mgrep search "deprecated" -i project --json | \
+lgrep search "deprecated" -i project --json | \
   jq -r '.results[] | select(.score > 0.9) | .file' | \
   xargs grep -n "deprecated"
 ```
@@ -292,7 +292,7 @@ mgrep search "deprecated" -i project --json | \
 ```bash
 # Find recently modified files with specific content
 RECENT=$(git diff --name-only HEAD~5)
-mgrep search "refactor" -i project --json | \
+lgrep search "refactor" -i project --json | \
   jq -r '.results[].file' | \
   grep -F "$RECENT"
 ```
@@ -301,7 +301,7 @@ mgrep search "refactor" -i project --json | \
 
 ```bash
 # Monitor index size
-watch -n 60 'mgrep list --json | jq ".indexes[] | {name, chunks}"'
+watch -n 60 'lgrep list --json | jq ".indexes[] | {name, chunks}"'
 ```
 
 ## Troubleshooting
@@ -324,6 +324,6 @@ This is valid - no matches found. Not an error.
 ### Missing Fields
 
 All schemas include required fields. If parsing fails:
-1. Update mgrep to latest version
+1. Update lgrep to latest version
 2. Check if using correct schema for command
 3. Report as bug if fields are actually missing

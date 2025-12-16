@@ -11,7 +11,7 @@ describe('DaemonManager', () => {
   beforeEach(() => {
     // Set up test environment
     process.env = { ...originalEnv };
-    process.env['MGREP_HOME'] = testHome;
+    process.env['LGREP_HOME'] = testHome;
 
     // Clean up test directory
     if (existsSync(testHome)) {

@@ -10,12 +10,12 @@ describe('config command', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-config-cmd-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-config-cmd-test-${randomUUID()}`);
     await mkdir(testDir, { recursive: true });
 
-    // Save and override MGREP_HOME
+    // Save and override LGREP_HOME
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
   });
 
   afterEach(async () => {

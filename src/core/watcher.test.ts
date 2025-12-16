@@ -10,7 +10,7 @@ describe('createWatcher', () => {
 
   beforeEach(async () => {
     // Create a unique temporary directory for each test
-    testDir = join(tmpdir(), `mgrep-watcher-test-${Date.now()}`);
+    testDir = join(tmpdir(), `lgrep-watcher-test-${Date.now()}`);
     await mkdir(testDir, { recursive: true });
   });
 

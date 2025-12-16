@@ -12,7 +12,7 @@ describe('hashing utilities', () => {
   let testDir: string;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-hash-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testDir = join(tmpdir(), `lgrep-hash-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(testDir, { recursive: true });
   });
 

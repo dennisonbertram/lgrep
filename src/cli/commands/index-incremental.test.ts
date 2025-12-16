@@ -34,12 +34,12 @@ describe('index command - incremental indexing', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-incremental-cmd-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-incremental-cmd-test-${randomUUID()}`);
     sourceDir = join(testDir, 'source');
     await mkdir(sourceDir, { recursive: true });
 
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
 
     // Create initial test files
     await writeFile(join(sourceDir, 'file1.txt'), 'Initial content for file one.');

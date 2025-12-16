@@ -1,7 +1,7 @@
 # JSON Output Flag Implementation
 
 ## Overview
-Added `--json` (short form: `-j`) flag to all mgrep CLI commands for machine-readable output.
+Added `--json` (short form: `-j`) flag to all lgrep CLI commands for machine-readable output.
 
 ## Implementation Summary
 
@@ -130,33 +130,33 @@ Error codes:
 
 ### Search with JSON output
 ```bash
-mgrep search "authentication" --index my-project --json
-mgrep search "database" -i my-project -j  # short form
+lgrep search "authentication" --index my-project --json
+lgrep search "database" -i my-project -j  # short form
 ```
 
 ### Index with JSON output
 ```bash
-mgrep index ./src --name my-project --json
-mgrep index ./src -n my-project -j  # short form
+lgrep index ./src --name my-project --json
+lgrep index ./src -n my-project -j  # short form
 ```
 
 ### List with JSON output
 ```bash
-mgrep list --json
-mgrep list -j  # short form
+lgrep list --json
+lgrep list -j  # short form
 ```
 
 ### Delete with JSON output
 ```bash
-mgrep delete my-project --json
-mgrep delete my-project -j  # short form
+lgrep delete my-project --json
+lgrep delete my-project -j  # short form
 ```
 
 ### Config with JSON output
 ```bash
-mgrep config --json
-mgrep config model --json
-mgrep config model new-model --json
+lgrep config --json
+lgrep config model --json
+lgrep config model new-model --json
 ```
 
 ## Behavior

@@ -32,12 +32,12 @@ describe('watch command', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-watch-cmd-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-watch-cmd-test-${randomUUID()}`);
     await mkdir(testDir, { recursive: true });
 
-    // Save and override MGREP_HOME
+    // Save and override LGREP_HOME
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
 
     // Reset mocks
     vi.clearAllMocks();
@@ -95,7 +95,7 @@ describe('watch command', () => {
 
       const result = await runWatchCommand(testDir);
 
-      expect(result.indexName).toMatch(/mgrep-watch-cmd-test-/);
+      expect(result.indexName).toMatch(/lgrep-watch-cmd-test-/);
     });
 
     it('should throw error if watcher already running', async () => {

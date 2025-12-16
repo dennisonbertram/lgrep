@@ -33,12 +33,12 @@ describe('index command', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-index-cmd-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-index-cmd-test-${randomUUID()}`);
     sourceDir = join(testDir, 'source');
     await mkdir(sourceDir, { recursive: true });
 
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
 
     // Create some test files
     await writeFile(join(sourceDir, 'file1.txt'), 'Hello world, this is file one with some content.');

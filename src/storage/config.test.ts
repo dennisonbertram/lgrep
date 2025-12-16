@@ -8,7 +8,7 @@ import {
   getConfigValue,
   setConfigValue,
   DEFAULT_CONFIG,
-  type MgrepConfig,
+  type LgrepConfig,
 } from './config.js';
 
 describe('config management', () => {
@@ -16,14 +16,14 @@ describe('config management', () => {
 
   beforeEach(async () => {
     // Create a unique temp directory for each test
-    testDir = join(tmpdir(), `mgrep-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testDir = join(tmpdir(), `lgrep-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(testDir, { recursive: true });
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
   });
 
   afterEach(async () => {
     // Clean up temp directory
-    delete process.env['MGREP_HOME'];
+    delete process.env['LGREP_HOME'];
     await rm(testDir, { recursive: true, force: true });
   });
 
@@ -82,7 +82,7 @@ describe('config management', () => {
 
     it('should load existing config from file', async () => {
       // Create a config file first
-      const customConfig: MgrepConfig = {
+      const customConfig: LgrepConfig = {
         ...DEFAULT_CONFIG,
         model: 'custom-model',
         chunkSize: 1000,
@@ -112,7 +112,7 @@ describe('config management', () => {
 
   describe('saveConfig', () => {
     it('should save config to file', async () => {
-      const config: MgrepConfig = {
+      const config: LgrepConfig = {
         ...DEFAULT_CONFIG,
         model: 'saved-model',
       };
@@ -139,7 +139,7 @@ describe('config management', () => {
 
   describe('getConfigValue', () => {
     it('should get a specific config value', async () => {
-      const config: MgrepConfig = {
+      const config: LgrepConfig = {
         ...DEFAULT_CONFIG,
         model: 'test-model',
       };
@@ -164,7 +164,7 @@ describe('config management', () => {
     });
 
     it('should preserve other config values when setting one', async () => {
-      const initial: MgrepConfig = {
+      const initial: LgrepConfig = {
         ...DEFAULT_CONFIG,
         model: 'initial-model',
         chunkSize: 999,

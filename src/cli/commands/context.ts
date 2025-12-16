@@ -42,7 +42,7 @@ export async function runContextCommand(
     // Get the index
     const handle = await getIndex(db, options.index);
     if (!handle) {
-      throw new Error(`Index "${options.index}" not found. Create one with: mgrep index <path> -n ${options.index}`);
+      throw new Error(`Index "${options.index}" not found. Create one with: lgrep index <path> -n ${options.index}`);
     }
 
     // Create embedding client using the model from index metadata

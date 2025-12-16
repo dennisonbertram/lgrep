@@ -21,7 +21,7 @@ describe('lance incremental indexing', () => {
   let handle: IndexHandle;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-incremental-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-incremental-test-${randomUUID()}`);
     await mkdir(testDir, { recursive: true });
     db = await openDatabase(join(testDir, 'db'));
     handle = await createIndex(db, {

@@ -1,11 +1,11 @@
-import { loadConfig, saveConfig, DEFAULT_CONFIG, type MgrepConfig } from '../../storage/config.js';
+import { loadConfig, saveConfig, DEFAULT_CONFIG, type LgrepConfig } from '../../storage/config.js';
 import { formatAsJson } from './json-formatter.js';
 
 // Valid config keys that can be get/set
-const VALID_KEYS = Object.keys(DEFAULT_CONFIG) as (keyof MgrepConfig)[];
+const VALID_KEYS = Object.keys(DEFAULT_CONFIG) as (keyof LgrepConfig)[];
 
 // Keys that should be parsed as numbers
-const NUMERIC_KEYS: (keyof MgrepConfig)[] = ['chunkSize', 'chunkOverlap', 'maxFileSize'];
+const NUMERIC_KEYS: (keyof LgrepConfig)[] = ['chunkSize', 'chunkOverlap', 'maxFileSize'];
 
 /**
  * Run the config command.
@@ -28,11 +28,11 @@ export async function runConfigCommand(key?: string, value?: string, json?: bool
   }
 
   // Validate key
-  if (!VALID_KEYS.includes(key as keyof MgrepConfig)) {
+  if (!VALID_KEYS.includes(key as keyof LgrepConfig)) {
     throw new Error(`Unknown config key: ${key}. Valid keys: ${VALID_KEYS.join(', ')}`);
   }
 
-  const typedKey = key as keyof MgrepConfig;
+  const typedKey = key as keyof LgrepConfig;
 
   // Get single value
   if (value === undefined) {
@@ -60,7 +60,7 @@ export async function runConfigCommand(key?: string, value?: string, json?: bool
 /**
  * Parse a string value to the appropriate type for the config key.
  */
-function parseValue(key: keyof MgrepConfig, value: string): MgrepConfig[keyof MgrepConfig] {
+function parseValue(key: keyof LgrepConfig, value: string): LgrepConfig[keyof LgrepConfig] {
   if (NUMERIC_KEYS.includes(key)) {
     const num = parseInt(value, 10);
     if (isNaN(num)) {
@@ -90,7 +90,7 @@ function formatValue(value: unknown): string {
 /**
  * Format the entire config for display.
  */
-function formatConfig(config: MgrepConfig): string {
+function formatConfig(config: LgrepConfig): string {
   const lines: string[] = [];
 
   for (const key of VALID_KEYS) {

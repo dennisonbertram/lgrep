@@ -11,11 +11,11 @@ describe('list command', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-list-cmd-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-list-cmd-test-${randomUUID()}`);
     await mkdir(testDir, { recursive: true });
 
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
   });
 
   afterEach(async () => {

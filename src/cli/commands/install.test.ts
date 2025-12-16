@@ -22,13 +22,13 @@ import * as os from 'os';
 
 describe('install command', () => {
   const mockHomedir = '/mock/home';
-  const skillPath = path.join(mockHomedir, '.claude', 'skills', 'mgrep-search', 'SKILL.md');
+  const skillPath = path.join(mockHomedir, '.claude', 'skills', 'lgrep-search', 'SKILL.md');
   const settingsPath = path.join(mockHomedir, '.claude', 'settings.json');
 
   // Mock templates
-  const mockSkillTemplate = '---\nname: mgrep-search\n---\n# mgrep skill';
-  const mockHookTemplate = '#!/bin/bash\necho "mgrep-check"';
-  const mockClaudeMdTemplate = '## mgrep\n\nInstructions here';
+  const mockSkillTemplate = '---\nname: lgrep-search\n---\n# lgrep skill';
+  const mockHookTemplate = '#!/bin/bash\necho "lgrep-check"';
+  const mockClaudeMdTemplate = '## lgrep\n\nInstructions here';
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -43,7 +43,7 @@ describe('install command', () => {
       if (pathStr.includes('templates/skill.md')) {
         return Promise.resolve(mockSkillTemplate);
       }
-      if (pathStr.includes('templates/mgrep-check.sh')) {
+      if (pathStr.includes('templates/lgrep-check.sh')) {
         return Promise.resolve(mockHookTemplate);
       }
       if (pathStr.includes('templates/claude-md-section.md')) {
@@ -71,12 +71,12 @@ describe('install command', () => {
       expect(result.success).toBe(true);
       expect(result.skillCreated).toBe(true);
       expect(fs.mkdir).toHaveBeenCalledWith(
-        expect.stringContaining('mgrep-search'),
+        expect.stringContaining('lgrep-search'),
         { recursive: true }
       );
       expect(fs.writeFile).toHaveBeenCalledWith(
         skillPath,
-        expect.stringContaining('name: mgrep-search')
+        expect.stringContaining('name: lgrep-search')
       );
     });
 
@@ -133,7 +133,7 @@ describe('install command', () => {
         if (pathStr.includes('settings.json')) {
           return Promise.resolve(JSON.stringify(mockSettings));
         }
-        if (pathStr.includes('templates/mgrep-check.sh')) {
+        if (pathStr.includes('templates/lgrep-check.sh')) {
           return Promise.resolve(mockHookTemplate);
         }
         return Promise.reject(new Error('ENOENT'));
@@ -157,7 +157,7 @@ describe('install command', () => {
       const emptyMatcherEntry = writtenSettings.hooks.SessionStart.find((e: { matcher: string }) => e.matcher === '');
       expect(emptyMatcherEntry).toBeDefined();
       expect(emptyMatcherEntry.hooks).toHaveLength(1);
-      expect(emptyMatcherEntry.hooks[0].command).toContain('mgrep-check');
+      expect(emptyMatcherEntry.hooks[0].command).toContain('lgrep-check');
     });
 
     it('should skip hook when --skip-hook flag is set', async () => {
@@ -184,7 +184,7 @@ describe('install command', () => {
               hooks: [
                 {
                   type: 'command',
-                  command: '~/.claude/hooks/mgrep-check.sh',
+                  command: '~/.claude/hooks/lgrep-check.sh',
                 },
               ],
             },
@@ -208,7 +208,7 @@ describe('install command', () => {
         if (pathStr.includes('settings.json')) {
           return Promise.resolve(JSON.stringify(settingsWithHook));
         }
-        if (pathStr.includes('templates/mgrep-check.sh')) {
+        if (pathStr.includes('templates/lgrep-check.sh')) {
           return Promise.resolve(mockHookTemplate);
         }
         return Promise.reject(new Error('ENOENT'));
@@ -235,7 +235,7 @@ describe('install command', () => {
         if (pathStr.includes('settings.json')) {
           return Promise.resolve('{}');
         }
-        if (pathStr.includes('templates/mgrep-check.sh')) {
+        if (pathStr.includes('templates/lgrep-check.sh')) {
           return Promise.resolve(mockHookTemplate);
         }
         return Promise.reject(new Error('ENOENT'));
@@ -265,7 +265,7 @@ describe('install command', () => {
         if (pathStr.includes('settings.json')) {
           return Promise.reject(new Error('ENOENT'));
         }
-        if (pathStr.includes('templates/mgrep-check.sh')) {
+        if (pathStr.includes('templates/lgrep-check.sh')) {
           return Promise.resolve(mockHookTemplate);
         }
         return Promise.reject(new Error('ENOENT'));
@@ -286,7 +286,7 @@ describe('install command', () => {
   });
 
   describe('project CLAUDE.md', () => {
-    it('should add mgrep section to project CLAUDE.md when flag is set', async () => {
+    it('should add lgrep section to project CLAUDE.md when flag is set', async () => {
       const mockClaudeMd = '# Existing content\n\nSome text';
 
       // Mock access to indicate CLAUDE.md exists
@@ -308,7 +308,7 @@ describe('install command', () => {
         if (pathStr.includes('templates/claude-md-section.md')) {
           return Promise.resolve(mockClaudeMdTemplate);
         }
-        if (pathStr.includes('templates/mgrep-check.sh')) {
+        if (pathStr.includes('templates/lgrep-check.sh')) {
           return Promise.resolve(mockHookTemplate);
         }
         return Promise.reject(new Error('ENOENT'));
@@ -329,12 +329,12 @@ describe('install command', () => {
         (call) => call[0].toString().endsWith('CLAUDE.md')
       );
       expect(writeCall).toBeDefined();
-      expect(writeCall![1]).toContain('## mgrep');
+      expect(writeCall![1]).toContain('## lgrep');
       expect(writeCall![1]).toContain(mockClaudeMd);
     });
 
-    it('should not update project CLAUDE.md if mgrep section already exists', async () => {
-      const mockClaudeMd = '# Project\n\n## mgrep\n\nExisting mgrep config';
+    it('should not update project CLAUDE.md if lgrep section already exists', async () => {
+      const mockClaudeMd = '# Project\n\n## lgrep\n\nExisting lgrep config';
 
       // Mock access to indicate CLAUDE.md exists
       vi.mocked(fs.access).mockImplementation((path) => {
@@ -364,7 +364,7 @@ describe('install command', () => {
 
       expect(result.success).toBe(true);
       expect(result.projectClaudeUpdated).toBe(false);
-      expect(result.projectClaudeAlreadyHasMgrep).toBe(true);
+      expect(result.projectClaudeAlreadyHasLgrep).toBe(true);
     });
 
     it('should skip project CLAUDE.md when flag is not set', async () => {
@@ -432,7 +432,7 @@ describe('install command', () => {
         if (pathStr.includes('settings.json')) {
           return Promise.resolve('invalid json{');
         }
-        if (pathStr.includes('templates/mgrep-check.sh')) {
+        if (pathStr.includes('templates/lgrep-check.sh')) {
           return Promise.resolve(mockHookTemplate);
         }
         return Promise.reject(new Error('ENOENT'));

@@ -1,11 +1,11 @@
 {
-  "name": "mgrep",
+  "name": "lgrep",
   "version": "0.1.0",
   "description": "Local semantic search CLI - privacy-first, mixedbread.ai quality without the cloud",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "mgrep": "dist/cli/index.js"
+    "lgrep": "dist/cli/index.js"
   },
   "scripts": {
     "build": "tsup",

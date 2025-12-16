@@ -17,7 +17,7 @@ import { getDbPath } from './utils/paths.js';
 const program = new Command();
 
 program
-  .name('mgrep')
+  .name('lgrep')
   .description('Local semantic search CLI - privacy-first, mixedbread.ai quality without the cloud')
   .version('0.1.0');
 
@@ -31,7 +31,7 @@ program
   .action(async (options: { skipSummarization?: boolean; autoInstall?: boolean; json?: boolean }) => {
     try {
       if (!options.json) {
-        console.log('Setting up mgrep...\n');
+        console.log('Setting up lgrep...\n');
       }
 
       const result = await runSetupCommand({
@@ -79,7 +79,7 @@ program
         console.log(`  ${result.summarizationModelPulled ? '✓' : '✗'} Summarization model ready`);
       }
       console.log(`  ${result.healthCheckPassed ? '✓' : '✗'} Health check passed`);
-      console.log('\nmgrep is ready to use!');
+      console.log('\nlgrep is ready to use!');
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));
@@ -536,13 +536,13 @@ program
     }
   });
 
-// Install command - integrates mgrep with Claude Code
+// Install command - integrates lgrep with Claude Code
 program
   .command('install')
-  .description('Install mgrep integration with Claude Code')
+  .description('Install lgrep integration with Claude Code')
   .option('--skip-skill', 'Do not create the skill')
   .option('--skip-hook', 'Do not add SessionStart hook')
-  .option('--add-to-project', 'Add mgrep instructions to project CLAUDE.md')
+  .option('--add-to-project', 'Add lgrep instructions to project CLAUDE.md')
   .option('-j, --json', 'Output as JSON')
   .action(async (options: {
     skipSkill?: boolean;
@@ -590,12 +590,12 @@ program
       if (options.addToProject) {
         if (result.projectClaudeUpdated) {
           console.log(`  ✓ Project CLAUDE.md updated at ${result.projectClaudePath}`);
-        } else if (result.projectClaudeAlreadyHasMgrep) {
-          console.log(`  ○ Project CLAUDE.md already has mgrep section at ${result.projectClaudePath}`);
+        } else if (result.projectClaudeAlreadyHasLgrep) {
+          console.log(`  ○ Project CLAUDE.md already has lgrep section at ${result.projectClaudePath}`);
         }
       }
 
-      console.log('\nmgrep is now integrated with Claude Code!');
+      console.log('\nlgrep is now integrated with Claude Code!');
       console.log('The SessionStart hook will automatically start watchers for your projects.');
     } catch (err) {
       if (options.json) {

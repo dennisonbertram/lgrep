@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 describe('analyzeFile', () => {
   it('should analyze a TypeScript file and return FileAnalysis', async () => {
     // Create temp file
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
     const testFile = join(tmpDir, 'test.ts');
 
     const code = `
@@ -57,7 +57,7 @@ export class Greeter {
   });
 
   it('should handle files with imports', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
     const testFile = join(tmpDir, 'test.ts');
 
     const code = `
@@ -90,7 +90,7 @@ export async function loadData(path: string) {
   });
 
   it('should extract function calls', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
     const testFile = join(tmpDir, 'test.ts');
 
     const code = `
@@ -122,7 +122,7 @@ export function main() {
   });
 
   it('should handle parse errors gracefully', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
     const testFile = join(tmpDir, 'test.ts');
 
     const invalidCode = `
@@ -154,7 +154,7 @@ export function broken( {
 
 describe('analyzeProject', () => {
   it('should analyze all files in a directory', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     // Create multiple files
     await writeFile(join(tmpDir, 'file1.ts'), 'export function fn1() {}');
@@ -180,7 +180,7 @@ describe('analyzeProject', () => {
   });
 
   it('should filter results by --symbols option', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     await writeFile(join(tmpDir, 'test.ts'), 'export function hello() {}');
 
@@ -196,7 +196,7 @@ describe('analyzeProject', () => {
   });
 
   it('should filter results by --deps option', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     await writeFile(join(tmpDir, 'test.ts'), "import { x } from './other';\nexport { x };");
 
@@ -212,7 +212,7 @@ describe('analyzeProject', () => {
   });
 
   it('should filter results by --calls option', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     await writeFile(join(tmpDir, 'test.ts'), 'function a() {} function b() { a(); }');
 
@@ -228,7 +228,7 @@ describe('analyzeProject', () => {
   });
 
   it('should analyze single file when --file option is provided', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     await writeFile(join(tmpDir, 'target.ts'), 'export function target() {}');
     await writeFile(join(tmpDir, 'other.ts'), 'export function other() {}');
@@ -247,7 +247,7 @@ describe('analyzeProject', () => {
   });
 
   it('should calculate stats by symbol kind', async () => {
-    const tmpDir = await mkdtemp(join(tmpdir(), 'mgrep-test-'));
+    const tmpDir = await mkdtemp(join(tmpdir(), 'lgrep-test-'));
 
     const code = `
 export function fn() {}

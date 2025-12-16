@@ -2,12 +2,12 @@
 
 ## Overview
 
-The `mgrep setup` command automates the installation of Ollama and required models for mgrep to function.
+The `lgrep setup` command automates the installation of Ollama and required models for lgrep to function.
 
 ## Usage
 
 ```bash
-mgrep setup [options]
+lgrep setup [options]
 ```
 
 ## Options
@@ -45,12 +45,12 @@ The setup command performs the following steps:
 
 ### Basic Setup
 ```bash
-mgrep setup
+lgrep setup
 ```
 
 Output:
 ```
-Setting up mgrep...
+Setting up lgrep...
 
   Checking Ollama installation...
   Checking Ollama status...
@@ -67,19 +67,19 @@ Setup complete!
   ✓ Summarization model ready
   ✓ Health check passed
 
-mgrep is ready to use!
+lgrep is ready to use!
 ```
 
 ### Skip Summarization Model
 ```bash
-mgrep setup --skip-summarization
+lgrep setup --skip-summarization
 ```
 
 This will only pull the embedding model, skipping the optional summarization model.
 
 ### JSON Output
 ```bash
-mgrep setup --json
+lgrep setup --json
 ```
 
 Output:
@@ -100,7 +100,7 @@ Output:
 
 ### Manual Installation (No Auto-Install)
 ```bash
-mgrep setup --no-auto-install
+lgrep setup --no-auto-install
 ```
 
 This will check if Ollama is installed and provide manual installation instructions if not found.
@@ -146,4 +146,4 @@ The command uses models defined in `src/storage/config.ts`:
 - `model`: Embedding model (default: `mxbai-embed-large`)
 - `summarizationModel`: Summarization model (default: `llama3.2:3b`)
 
-These can be changed using the `mgrep config` command.
+These can be changed using the `lgrep config` command.

@@ -5,7 +5,7 @@ export { hashContent, hashFile, createCacheKey } from './core/hash.js';
 export { walkFiles, shouldExclude, isBinaryFile, DEFAULT_EXCLUDES, DEFAULT_SECRET_EXCLUDES, type WalkResult, type WalkOptions } from './core/walker.js';
 
 // Storage exports
-export { loadConfig, saveConfig, getConfigValue, setConfigValue, DEFAULT_CONFIG, type MgrepConfig } from './storage/config.js';
+export { loadConfig, saveConfig, getConfigValue, setConfigValue, DEFAULT_CONFIG, type LgrepConfig } from './storage/config.js';
 export {
   openDatabase,
   createIndex,
@@ -35,4 +35,4 @@ export {
 } from './storage/cache.js';
 
 // CLI utilities
-export { getMgrepHome, getDbPath, getConfigPath, getCachePath, getIndexPath, getIndexMetaPath } from './cli/utils/paths.js';
+export { getLgrepHome, getDbPath, getConfigPath, getCachePath, getIndexPath, getIndexMetaPath } from './cli/utils/paths.js';

@@ -43,12 +43,12 @@ describe('JSON flag integration', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-json-integration-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-json-integration-${randomUUID()}`);
     sourceDir = join(testDir, 'source');
     await mkdir(sourceDir, { recursive: true });
 
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
 
     await writeFile(join(sourceDir, 'test.ts'), 'function test() {}');
   });
@@ -158,12 +158,12 @@ describe('JSON output content validation', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-json-content-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-json-content-${randomUUID()}`);
     sourceDir = join(testDir, 'source');
     await mkdir(sourceDir, { recursive: true });
 
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
 
     await writeFile(join(sourceDir, 'test.ts'), 'function test() {}');
   });

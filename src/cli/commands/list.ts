@@ -16,7 +16,7 @@ export async function runListCommand(json?: boolean): Promise<string> {
     const indexes = await listIndexes(db);
 
     if (indexes.length === 0) {
-      const message = 'No indexes found. Use `mgrep index <path>` to create one.';
+      const message = 'No indexes found. Use `lgrep index <path>` to create one.';
       if (json) {
         return formatAsJson('list', '');
       }

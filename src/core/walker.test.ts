@@ -17,7 +17,7 @@ describe('file walker', () => {
 
   beforeEach(async () => {
     // Create a unique temp directory for each test
-    testDir = join(tmpdir(), `mgrep-walker-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testDir = join(tmpdir(), `lgrep-walker-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(testDir, { recursive: true });
   });
 

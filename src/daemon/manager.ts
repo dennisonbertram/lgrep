@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync, createWriteStream } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getMgrepHome } from '../cli/utils/paths.js';
+import { getLgrepHome } from '../cli/utils/paths.js';
 
 export interface DaemonInfo {
   indexName: string;
@@ -20,11 +20,11 @@ interface PidFileData {
 
 export class DaemonManager {
   private getPidDir(): string {
-    return join(getMgrepHome(), 'pids');
+    return join(getLgrepHome(), 'pids');
   }
 
   private getLogDir(): string {
-    return join(getMgrepHome(), 'logs');
+    return join(getLgrepHome(), 'logs');
   }
 
   private getPidFilePath(indexName: string): string {

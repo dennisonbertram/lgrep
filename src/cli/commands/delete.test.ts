@@ -11,11 +11,11 @@ describe('delete command', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-delete-cmd-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-delete-cmd-test-${randomUUID()}`);
     await mkdir(testDir, { recursive: true });
 
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
   });
 
   afterEach(async () => {

@@ -32,12 +32,12 @@ describe('index command - integration test', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-integration-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-integration-test-${randomUUID()}`);
     sourceDir = join(testDir, 'source');
     await mkdir(sourceDir, { recursive: true });
 
     originalEnv = { ...process.env };
-    process.env['MGREP_HOME'] = testDir;
+    process.env['LGREP_HOME'] = testDir;
   });
 
   afterEach(async () => {

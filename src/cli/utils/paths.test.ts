@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { getMgrepHome, getDbPath, getConfigPath, getCachePath } from './paths.js';
+import { getLgrepHome, getDbPath, getConfigPath, getCachePath } from './paths.js';
 
 describe('paths utility', () => {
   const originalEnv = process.env;
@@ -14,52 +14,52 @@ describe('paths utility', () => {
     process.env = originalEnv;
   });
 
-  describe('getMgrepHome', () => {
-    it('should use MGREP_HOME env var when set', () => {
-      process.env['MGREP_HOME'] = '/custom/mgrep/path';
-      expect(getMgrepHome()).toBe('/custom/mgrep/path');
+  describe('getLgrepHome', () => {
+    it('should use LGREP_HOME env var when set', () => {
+      process.env['LGREP_HOME'] = '/custom/lgrep/path';
+      expect(getLgrepHome()).toBe('/custom/lgrep/path');
     });
 
     it('should use XDG_DATA_HOME on Linux when set', () => {
-      delete process.env['MGREP_HOME'];
+      delete process.env['LGREP_HOME'];
       process.env['XDG_DATA_HOME'] = '/home/user/.local/share';
 
       // Mock platform - this is tricky as process.platform is readonly
       // We'll test the actual behavior based on current platform
-      const home = getMgrepHome();
+      const home = getLgrepHome();
       expect(home).toBeDefined();
       expect(typeof home).toBe('string');
       expect(home.length).toBeGreaterThan(0);
     });
 
     it('should return a valid path on the current platform', () => {
-      delete process.env['MGREP_HOME'];
-      const home = getMgrepHome();
+      delete process.env['LGREP_HOME'];
+      const home = getLgrepHome();
 
       expect(home).toBeDefined();
       expect(typeof home).toBe('string');
-      expect(home).toContain('mgrep');
+      expect(home).toContain('lgrep');
     });
   });
 
   describe('getDbPath', () => {
-    it('should return db subdirectory of mgrep home', () => {
-      process.env['MGREP_HOME'] = '/test/mgrep';
-      expect(getDbPath()).toBe('/test/mgrep/db');
+    it('should return db subdirectory of lgrep home', () => {
+      process.env['LGREP_HOME'] = '/test/lgrep';
+      expect(getDbPath()).toBe('/test/lgrep/db');
     });
   });
 
   describe('getConfigPath', () => {
-    it('should return config.json path in mgrep home', () => {
-      process.env['MGREP_HOME'] = '/test/mgrep';
-      expect(getConfigPath()).toBe('/test/mgrep/config.json');
+    it('should return config.json path in lgrep home', () => {
+      process.env['LGREP_HOME'] = '/test/lgrep';
+      expect(getConfigPath()).toBe('/test/lgrep/config.json');
     });
   });
 
   describe('getCachePath', () => {
-    it('should return cache subdirectory of mgrep home', () => {
-      process.env['MGREP_HOME'] = '/test/mgrep';
-      expect(getCachePath()).toBe('/test/mgrep/cache');
+    it('should return cache subdirectory of lgrep home', () => {
+      process.env['LGREP_HOME'] = '/test/lgrep';
+      expect(getCachePath()).toBe('/test/lgrep/cache');
     });
   });
 });

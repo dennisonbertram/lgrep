@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implemented incremental indexing for the mgrep CLI to skip unchanged files during reindexing via content hash comparison. This significantly improves reindexing performance by only re-embedding files that have changed.
+Implemented incremental indexing for the lgrep CLI to skip unchanged files during reindexing via content hash comparison. This significantly improves reindexing performance by only re-embedding files that have changed.
 
 ## Implementation
 
@@ -62,12 +62,12 @@ Enhanced the `runIndexCommand` function with:
 
 ### Initial Indexing
 ```bash
-mgrep index /path/to/directory --name my-index
+lgrep index /path/to/directory --name my-index
 ```
 
 ### Reindexing (Update Mode)
 ```bash
-mgrep index /path/to/directory --name my-index --mode update
+lgrep index /path/to/directory --name my-index --mode update
 ```
 
 ## Performance Benefits

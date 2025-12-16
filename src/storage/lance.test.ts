@@ -24,7 +24,7 @@ describe('lance storage', () => {
   let testDir: string;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `mgrep-lance-test-${randomUUID()}`);
+    testDir = join(tmpdir(), `lgrep-lance-test-${randomUUID()}`);
     await mkdir(testDir, { recursive: true });
   });
 
