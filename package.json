@@ -1,12 +1,27 @@
 {
   "name": "lgrep",
   "version": "0.1.0",
-  "description": "Local semantic search CLI - privacy-first, mixedbread.ai quality without the cloud",
+  "description": "Local semantic code search CLI - AI-powered grep with embeddings, multi-provider support (Ollama, Anthropic, OpenAI, Groq)",
   "type": "module",
   "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "bin": {
     "lgrep": "dist/cli/index.js"
   },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.js.map",
+    "dist/**/*.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -14,7 +29,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "prepublishOnly": "npm run type-check && npm run build && npm test"
   },
   "engines": {
     "node": ">=18.17"
@@ -22,11 +38,20 @@
   "keywords": [
     "search",
     "semantic-search",
+    "code-search",
     "embeddings",
     "ollama",
+    "anthropic",
+    "openai",
+    "groq",
+    "ai",
+    "llm",
     "local",
     "cli",
-    "vector-search"
+    "vector-search",
+    "rag",
+    "code-intelligence",
+    "developer-tools"
   ],
   "author": "Dennison Bertram <dennison@dennisonbertram.com>",
   "license": "MIT",

@@ -1,0 +1,249 @@
+# lgrep
+
+Local semantic code search CLI - AI-powered grep with embeddings.
+
+```bash
+npm install -g lgrep
+```
+
+## Features
+
+- **Semantic Search** - Find code by meaning, not just text matching
+- **Multi-Provider AI** - Ollama (local), Anthropic, OpenAI, or Groq
+- **Code Intelligence** - Understands symbols, calls, and dependencies
+- **Privacy-First** - Run completely locally with Ollama
+- **Fast** - LanceDB vector storage, incremental indexing
+- **Watch Mode** - Auto-update indexes on file changes
+
+## Quick Start
+
+```bash
+# Setup Ollama (local, private)
+lgrep setup
+
+# Index your project
+lgrep index ./my-project
+
+# Search semantically
+lgrep search "user authentication logic"
+
+# Find symbol usages
+lgrep search --usages "validateUser"
+
+# Find definitions
+lgrep search --definition "UserService"
+
+# Build context for a task
+lgrep context "add rate limiting to the API"
+```
+
+## Installation
+
+```bash
+npm install -g lgrep
+```
+
+### Requirements
+
+- Node.js >= 18.17
+- [Ollama](https://ollama.ai) (for local mode) or API key for cloud providers
+
+### Setup Local Mode (Ollama)
+
+```bash
+# Install Ollama from https://ollama.ai
+# Then run setup:
+lgrep setup
+```
+
+This pulls the required models:
+- `mxbai-embed-large` - For embeddings
+- `llama3.2:3b` - For code summarization
+
+## Commands
+
+### `lgrep index <path>`
+
+Index a directory for semantic search.
+
+```bash
+lgrep index ./src                    # Index with auto-generated name
+lgrep index ./src --name my-project  # Custom index name
+lgrep index ./src --update           # Incremental update
+lgrep index ./src --force            # Full reindex
+```
+
+### `lgrep search <query>`
+
+Search indexed code semantically.
+
+```bash
+lgrep search "error handling"        # Semantic search
+lgrep search --usages "fetchUser"    # Find all usages
+lgrep search --definition "Config"   # Find definitions
+lgrep search --type function "auth"  # Filter by symbol type
+lgrep search "api" --limit 20        # Adjust result count
+```
+
+### `lgrep context <task>`
+
+Build context package for a coding task.
+
+```bash
+lgrep context "implement caching"              # Get relevant files/symbols
+lgrep context "fix N+1 query" --suggest        # Include implementation steps
+lgrep context "add tests" --max-tokens 16000   # Limit context size
+```
+
+### `lgrep list`
+
+List all indexes.
+
+```bash
+lgrep list          # Show all indexes
+lgrep list --json   # JSON output
+```
+
+### `lgrep watch <index-name>`
+
+Watch for file changes and update index automatically.
+
+```bash
+lgrep watch my-project         # Start watching
+lgrep watch my-project --stop  # Stop watching
+```
+
+### `lgrep delete <index-name>`
+
+Delete an index.
+
+```bash
+lgrep delete my-project
+```
+
+### `lgrep config`
+
+Manage configuration.
+
+```bash
+lgrep config list                                    # Show all settings
+lgrep config get model                               # Get specific setting
+lgrep config set summarizationModel anthropic:claude-3-5-haiku-latest
+```
+
+## Multi-Provider Support
+
+lgrep supports multiple AI providers for summarization and context suggestions:
+
+| Provider | Speed | Quality | Privacy |
+|----------|-------|---------|---------|
+| **Ollama** | ~3s | Good | Local |
+| **Groq** | ~0.1s | Good | Cloud |
+| **Anthropic** | ~1.5s | Excellent | Cloud |
+| **OpenAI** | ~2s | Excellent | Cloud |
+
+### Auto-Detection
+
+lgrep automatically selects the best available provider based on environment variables:
+
+```bash
+# Priority: Groq > Anthropic > OpenAI > Ollama
+export GROQ_API_KEY=gsk_...
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+```
+
+### Manual Selection
+
+```bash
+# Use specific provider
+lgrep config set summarizationModel groq:llama-3.1-8b-instant
+lgrep config set summarizationModel anthropic:claude-3-5-haiku-latest
+lgrep config set summarizationModel openai:gpt-4o-mini
+lgrep config set summarizationModel ollama:llama3.2:3b
+
+# Auto-detect (default)
+lgrep config set summarizationModel auto
+```
+
+## Programmatic API
+
+```typescript
+import {
+  createEmbeddingClient,
+  createAIProvider,
+  detectBestProvider
+} from 'lgrep';
+
+// Embeddings
+const embedder = createEmbeddingClient({ model: 'mxbai-embed-large' });
+const { embeddings } = await embedder.embed(['hello world']);
+
+// AI Provider (auto-detect)
+const provider = createAIProvider({ model: detectBestProvider() });
+const response = await provider.generateText('Explain this code...');
+```
+
+## Configuration
+
+Configuration is stored in `~/.lgrep/config.json`:
+
+```json
+{
+  "model": "mxbai-embed-large",
+  "summarizationModel": "auto",
+  "ollamaHost": "http://localhost:11434",
+  "embedBatchSize": 10,
+  "dbBatchSize": 250
+}
+```
+
+### Environment Variables
+
+```bash
+LGREP_HOME          # Config/data directory (default: ~/.lgrep)
+OLLAMA_HOST         # Ollama server URL
+GROQ_API_KEY        # Groq API key
+ANTHROPIC_API_KEY   # Anthropic API key
+OPENAI_API_KEY      # OpenAI API key
+```
+
+## Performance
+
+Optimized for large codebases:
+
+- **Batched embeddings** - 10 chunks per API call
+- **Batched DB writes** - 250 chunks per flush
+- **Incremental indexing** - Only reprocess changed files
+- **File metadata table** - O(files) hash lookups
+
+| Repo Size | Memory | Index Time |
+|-----------|--------|------------|
+| 1,000 files | ~150MB | ~2 min |
+| 5,000 files | ~200MB | ~10 min |
+| 10,000 files | ~300MB | ~20 min |
+
+## Integration with Claude Code
+
+lgrep works great with Claude Code for AI-assisted development:
+
+```bash
+# In Claude Code, lgrep auto-detects ANTHROPIC_API_KEY
+lgrep index .
+lgrep context "implement feature X" --suggest
+```
+
+## License
+
+MIT - See [LICENSE](LICENSE)
+
+## Contributing
+
+Contributions welcome! Please read the contributing guidelines first.
+
+```bash
+git clone https://github.com/dennisonbertram/lgrep
+cd lgrep
+npm install
+npm test
+```
