@@ -151,6 +151,26 @@ lgrep list          # Show all indexes
 lgrep list --json   # JSON output
 ```
 
+### `lgrep doctor`
+
+Check lgrep health, configuration, and indexing status.
+
+```bash
+lgrep doctor              # Check current directory
+lgrep doctor --path /foo  # Check specific path
+lgrep doctor --json       # JSON output
+```
+
+Output includes:
+- ✓ lgrep home directory
+- ✓ Config file status
+- ✓ Ollama installation/running status
+- ✓ Embedding provider availability
+- ✓ Index count and names
+- ✓ Current directory indexing status
+- ✓ Watcher daemon status
+- ✓ Claude integration status
+
 ### `lgrep watch <index-name>`
 
 Watch for file changes and update index automatically.

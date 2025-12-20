@@ -45,3 +45,6 @@ export {
 
 // CLI utilities
 export { getLgrepHome, getDbPath, getConfigPath, getCachePath, getIndexPath, getIndexMetaPath } from './cli/utils/paths.js';
+
+// CLI commands
+export { runDoctorCommand, type DoctorResult, type DoctorOptions, type CheckResult } from './cli/commands/doctor.js';

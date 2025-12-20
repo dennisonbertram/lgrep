@@ -20,6 +20,7 @@ import { runRenameCommand } from './commands/rename.js';
 import { runIntentCommand, presentIntentResult } from './commands/intent.js';
 import { runDepsCommand } from './commands/deps.js';
 import { runImpactCommand } from './commands/impact.js';
+import { runDoctorCommand } from './commands/doctor.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { openDatabase, deleteIndex } from '../storage/lance.js';
 import { getDbPath } from './utils/paths.js';
@@ -1040,6 +1041,76 @@ program
 
       console.log('\nlgrep is now integrated with Claude Code!');
       console.log('Claude will now know to use lgrep for code search and analysis.');
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Doctor command - check lgrep health and configuration
+program
+  .command('doctor')
+  .description('Check lgrep health, configuration, and indexing status')
+  .option('-p, --path <path>', 'Path to check (defaults to current directory)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { path?: string; json?: boolean }) => {
+    try {
+      const result = await runDoctorCommand({
+        path: options.path,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('doctor', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      // Header
+      console.log('\n🩺 lgrep doctor\n');
+
+      // Status icons
+      const icons = {
+        ok: '✓',
+        warn: '⚠',
+        error: '✗',
+      };
+
+      const colors = {
+        ok: '\x1b[32m',    // green
+        warn: '\x1b[33m',  // yellow
+        error: '\x1b[31m', // red
+        reset: '\x1b[0m',
+      };
+
+      // Print each check
+      for (const check of result.checks) {
+        const icon = icons[check.status];
+        const color = colors[check.status];
+        console.log(`${color}${icon}${colors.reset} ${check.name}: ${check.message}`);
+        if (check.fix && check.status !== 'ok') {
+          console.log(`    → ${check.fix}`);
+        }
+      }
+
+      // Summary
+      console.log('\n' + '─'.repeat(50));
+      const { ok, warn, error } = result.summary;
+      console.log(
+        `${colors.ok}${ok} passed${colors.reset}, ` +
+        `${colors.warn}${warn} warnings${colors.reset}, ` +
+        `${colors.error}${error} errors${colors.reset}`
+      );
+
+      if (result.success) {
+        console.log('\n✨ lgrep is healthy and ready to use!');
+      } else {
+        console.log('\n⚠️  Some issues need attention. See fixes above.');
+        process.exit(1);
+      }
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));
