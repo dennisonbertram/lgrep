@@ -10,7 +10,7 @@ npm install -g lgrep
 
 - **Semantic Search** - Find code by meaning, not just text matching
 - **Auto-Detection** - Automatically detects the right index from your current directory
-- **Multi-Provider AI** - Ollama (local), Anthropic, OpenAI, or Groq
+- **Multi-Provider AI** - Embeddings: OpenAI, Cohere, Voyage, Ollama | LLM: Groq, Anthropic, OpenAI, Ollama
 - **Code Intelligence** - Understands symbols, calls, and dependencies
 - **Privacy-First** - Run completely locally with Ollama
 - **Fast** - LanceDB vector storage, incremental indexing
@@ -180,14 +180,38 @@ lgrep config set summarizationModel anthropic:claude-3-5-haiku-latest
 
 ## Multi-Provider Support
 
+### Embedding Providers
+
+lgrep supports multiple embedding providers for vector generation:
+
+| Provider | Speed | Best For | API Key |
+|----------|-------|----------|---------|
+| **OpenAI** | ~50ms | General use, recommended | `OPENAI_API_KEY` |
+| **Cohere** | ~50ms | Multilingual | `COHERE_API_KEY` |
+| **Voyage** | ~100ms | Code (voyage-code-3) | `VOYAGE_API_KEY` |
+| **Ollama** | ~1-5s | Privacy, offline | None |
+
+```bash
+# Set API key and use auto-detection (recommended)
+export OPENAI_API_KEY="sk-..."
+lgrep config set model "auto"
+
+# Or explicitly choose a model
+lgrep config set model "openai:text-embedding-3-small"
+lgrep config set model "voyage:voyage-code-3"  # Great for code!
+lgrep config set model "cohere:embed-english-v3.0"
+```
+
+### LLM Providers (for Summarization)
+
 lgrep supports multiple AI providers for summarization and context suggestions:
 
 | Provider | Speed | Quality | Privacy |
 |----------|-------|---------|---------|
-| **Ollama** | ~3s | Good | Local |
 | **Groq** | ~0.1s | Good | Cloud |
 | **Anthropic** | ~1.5s | Excellent | Cloud |
 | **OpenAI** | ~2s | Excellent | Cloud |
+| **Ollama** | ~3s | Good | Local |
 
 ### Auto-Detection
 
@@ -227,15 +251,25 @@ lgrep config set summarizationModel auto
 ```typescript
 import {
   createEmbeddingClient,
+  detectBestEmbeddingProvider,
   createAIProvider,
   detectBestProvider
 } from 'lgrep';
 
-// Embeddings
-const embedder = createEmbeddingClient({ model: 'mxbai-embed-large' });
+// Embeddings (auto-detect provider)
+const embedder = createEmbeddingClient({ model: 'auto' });
 const { embeddings } = await embedder.embed(['hello world']);
+console.log(`Using ${embedder.provider}: ${embedder.model}`);
 
-// AI Provider (auto-detect)
+// Or specify provider explicitly
+const openaiEmbedder = createEmbeddingClient({ 
+  model: 'openai:text-embedding-3-small' 
+});
+const voyageEmbedder = createEmbeddingClient({ 
+  model: 'voyage:voyage-code-3'  // Great for code!
+});
+
+// AI Provider for LLM (auto-detect)
 const provider = createAIProvider({ model: detectBestProvider() });
 const response = await provider.generateText('Explain this code...');
 ```
@@ -246,7 +280,7 @@ Configuration is stored in `~/.lgrep/config.json`:
 
 ```json
 {
-  "model": "mxbai-embed-large",
+  "model": "auto",
   "summarizationModel": "auto",
   "ollamaHost": "http://localhost:11434",
   "embedBatchSize": 10,
@@ -259,9 +293,15 @@ Configuration is stored in `~/.lgrep/config.json`:
 ```bash
 LGREP_HOME          # Config/data directory (default: ~/.lgrep)
 OLLAMA_HOST         # Ollama server URL
-GROQ_API_KEY        # Groq API key
-ANTHROPIC_API_KEY   # Anthropic API key
-OPENAI_API_KEY      # OpenAI API key
+
+# Embedding providers (priority: OpenAI > Cohere > Voyage > Ollama)
+OPENAI_API_KEY      # OpenAI API key (embeddings + LLM)
+COHERE_API_KEY      # Cohere API key (embeddings only)
+VOYAGE_API_KEY      # Voyage API key (embeddings only)
+
+# LLM providers (priority: Groq > Anthropic > OpenAI > Ollama)
+GROQ_API_KEY        # Groq API key (LLM only, fastest)
+ANTHROPIC_API_KEY   # Anthropic API key (LLM only)
 ```
 
 ## Performance

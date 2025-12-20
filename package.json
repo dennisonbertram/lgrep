@@ -65,6 +65,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.56",
+    "@ai-sdk/cohere": "^2.0.21",
     "@ai-sdk/groq": "^2.0.33",
     "@ai-sdk/openai": "^2.0.87",
     "@babel/parser": "^7.28.5",
@@ -87,6 +88,7 @@
     "tree-sitter-java": "^0.23.5",
     "tree-sitter-python": "^0.25.0",
     "tree-sitter-rust": "^0.24.0",
+    "voyageai": "^0.1.0",
     "zod": "^4.2.1"
   },
   "devDependencies": {

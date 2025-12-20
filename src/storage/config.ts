@@ -8,7 +8,20 @@ import { DEFAULT_EXCLUDES, DEFAULT_SECRET_EXCLUDES } from '../core/walker.js';
  * Configuration schema for lgrep.
  */
 export interface LgrepConfig {
-  /** Default embedding model to use */
+  /**
+   * Embedding model to use.
+   * Format: 'auto' | 'provider:model'
+   *
+   * - 'auto': Auto-detect best available provider based on API keys
+   *   Priority: OpenAI > Cohere > Voyage > Ollama (local fallback)
+   *
+   * - 'openai:text-embedding-3-small': Fast and cheap (recommended)
+   * - 'openai:text-embedding-3-large': Higher quality
+   * - 'cohere:embed-english-v3.0': Good multilingual support
+   * - 'voyage:voyage-code-3': Optimized for code (excellent for code search)
+   * - 'voyage:voyage-3': General purpose
+   * - 'ollama:mxbai-embed-large': Local, private (default fallback)
+   */
   model: string;
   /** Target chunk size in tokens */
   chunkSize: number;
@@ -53,7 +66,7 @@ export interface LgrepConfig {
  * Default configuration values.
  */
 export const DEFAULT_CONFIG: LgrepConfig = {
-  model: 'mxbai-embed-large',
+  model: 'auto', // Auto-detect best available embedding provider
   chunkSize: 500,
   chunkOverlap: 50,
   maxFileSize: 5 * 1024 * 1024, // 5MB
