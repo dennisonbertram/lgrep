@@ -21,6 +21,7 @@ import { runIntentCommand, presentIntentResult } from './commands/intent.js';
 import { runDepsCommand } from './commands/deps.js';
 import { runImpactCommand } from './commands/impact.js';
 import { runDoctorCommand } from './commands/doctor.js';
+import { runGraphCommand } from './commands/graph.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { openDatabase, deleteIndex } from '../storage/lance.js';
 import { getDbPath } from './utils/paths.js';
@@ -328,6 +329,50 @@ program
     try {
       const output = await runListCommand(options.json);
       console.log(output);
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Graph command - visual graph viewer (dependencies / calls)
+program
+  .command('graph')
+  .description('Open a local web UI to visualize dependency/call graphs')
+  .option('-i, --index <name>', 'Index to visualize (auto-detected from current directory if not specified)')
+  .option('--mode <mode>', 'Graph mode (deps|calls)', 'deps')
+  .option('--external', 'Include external dependencies (deps mode only)', false)
+  .option('--port <port>', 'Port to bind (default: 0 for random high port)', '0')
+  .option('--no-open', 'Do not auto-open the browser')
+  .option('-j, --json', 'Output as JSON (prints URL)')
+  .action(async (options: {
+    index?: string;
+    mode?: string;
+    external?: boolean;
+    port?: string;
+    open?: boolean;
+    json?: boolean;
+  }) => {
+    try {
+      const port = options.port ? parseInt(options.port, 10) : 0;
+      if (Number.isNaN(port) || port < 0 || port > 65535) {
+        throw new Error(`Invalid --port value: "${options.port}"`);
+      }
+      const mode = options.mode === 'calls' ? 'calls' : 'deps';
+
+      await runGraphCommand({
+        index: options.index,
+        mode,
+        external: options.external,
+        port,
+        open: options.open,
+        json: options.json,
+        showProgress: !options.json,
+      });
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));

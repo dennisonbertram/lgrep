@@ -28,8 +28,8 @@ describe('config management', () => {
   });
 
   describe('DEFAULT_CONFIG', () => {
-    it('should have default model set to mxbai-embed-large', () => {
-      expect(DEFAULT_CONFIG.model).toBe('mxbai-embed-large');
+    it('should have default model set to auto for provider auto-detection', () => {
+      expect(DEFAULT_CONFIG.model).toBe('auto');
     });
 
     it('should have default chunk size of 500', () => {

@@ -257,7 +257,7 @@ async function checkCurrentDirectory(targetPath: string): Promise<CheckResult> {
       return {
         name: 'Current directory',
         status: 'ok',
-        message: `Indexed as "${detected.indexName}"`,
+        message: `Indexed as "${detected}"`,
       };
     }
   } catch {
