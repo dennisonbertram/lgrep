@@ -23,9 +23,18 @@ export function parseIntent(prompt: string): IntentAction {
 
   const callerMatch = normalized.match(/what calls\s+["']?([\w\.\-_/]+)["']?/i);
   if (callerMatch) {
+    const symbol = callerMatch[1];
+    if (!symbol) {
+      // Fall through to default search
+      return {
+        command: 'search',
+        args: [normalized],
+        reason: 'Could not extract symbol for callers lookup',
+      };
+    }
     return {
       command: 'callers',
-      args: [callerMatch[1]],
+      args: [symbol],
       reason: 'User asked what calls a symbol',
     };
   }
@@ -44,7 +53,7 @@ export function parseIntent(prompt: string): IntentAction {
 
   if (lower.includes('impact') || lower.includes('what happens if')) {
     const match = normalized.match(/change\s+["']?([\w\.\-_/]+)["']?/i);
-    const symbol = match ? match[1] : normalized.split(/\s+/).pop() ?? '';
+    const symbol = match?.[1] ?? normalized.split(/\s+/).pop() ?? '';
     return {
       command: 'impact',
       args: symbol ? [symbol] : [],
@@ -88,16 +97,25 @@ export function parseIntent(prompt: string): IntentAction {
     const match = normalized.match(/signature\s+change\s+for\s+["']?([\w\.\-_/]+)["']?/i);
     return {
       command: 'breaking',
-      args: match ? [match[1]] : [],
+      args: match?.[1] ? [match[1]] : [],
       reason: 'Breaking change concern',
     };
   }
 
   const renameMatch = normalized.match(/rename\s+["']?([\w\.\-_/]+)["']?\s+to\s+["']?([\w\.\-_/]+)["']?/i);
   if (renameMatch) {
+    const oldName = renameMatch[1];
+    const newName = renameMatch[2];
+    if (!oldName || !newName) {
+      return {
+        command: 'search',
+        args: [normalized],
+        reason: 'Could not extract both rename names',
+      };
+    }
     return {
       command: 'rename',
-      args: [renameMatch[1], renameMatch[2]],
+      args: [oldName, newName],
       reason: 'Rename recovery request',
     };
   }

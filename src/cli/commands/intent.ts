@@ -114,13 +114,13 @@ export async function runIntentCommand(
       break;
     }
     case 'search': {
-      const query = intent.args[0];
+      const query = intent.args[0] ?? '';
       payload = await runSearchCommand(query, {
         index: options.index,
         json: true,
         limit: options.limit,
       });
-      summary = `Search for "${query}"`;
+      summary = query ? `Search for "${query}"` : 'Search';
       break;
     }
   }

@@ -22,7 +22,12 @@ import { runDepsCommand } from './commands/deps.js';
 import { runImpactCommand } from './commands/impact.js';
 import { runDoctorCommand } from './commands/doctor.js';
 import { runGraphCommand } from './commands/graph.js';
+import { runStatsCommand } from './commands/stats.js';
+import { runLogsCommand, followLogs } from './commands/logs.js';
+import { runSymbolsCommand } from './commands/symbols.js';
+import { runExplainCommand } from './commands/explain.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
+import { detectIndexForDirectory } from './utils/auto-detect.js';
 import { openDatabase, deleteIndex } from '../storage/lance.js';
 import { getDbPath } from './utils/paths.js';
 import { checkFirstRun } from './utils/first-run.js';
@@ -1156,6 +1161,261 @@ program
         console.log('\n⚠️  Some issues need attention. See fixes above.');
         process.exit(1);
       }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Stats command - show index statistics
+program
+  .command('stats')
+  .description('Show index statistics (files, chunks, symbols, etc.)')
+  .option('-i, --index <name>', 'Index to show stats for (auto-detected if not specified)')
+  .option('-a, --all', 'Show stats for all indexes')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { index?: string; all?: boolean; json?: boolean }) => {
+    try {
+      const result = await runStatsCommand({
+        index: options.index,
+        all: options.all,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('stats', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+
+      // Format size
+      const formatSize = (bytes?: number) => {
+        if (!bytes) return 'unknown';
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      };
+
+      if (result.all && result.totals) {
+        console.log('\n📊 lgrep stats (all indexes)\n');
+        console.log(`Database: ${result.dbPath} (${formatSize(result.dbSizeBytes)})\n`);
+
+        for (const idx of result.all!) {
+          const watcherStatus = idx.watcherRunning ? `✓ watching (PID ${idx.watcherPid})` : '○ not watching';
+          console.log(`  ${idx.name}`);
+          console.log(`    Path: ${idx.rootPath}`);
+          console.log(`    Files: ${idx.files} | Chunks: ${idx.chunks} | Symbols: ${idx.symbols}`);
+          console.log(`    Calls: ${idx.calls} | Dependencies: ${idx.dependencies}`);
+          console.log(`    Watcher: ${watcherStatus}`);
+          console.log();
+        }
+
+        console.log('─'.repeat(50));
+        console.log(`Totals: ${result.totals.indexes} indexes, ${result.totals.chunks} chunks, ${result.totals.symbols} symbols`);
+      } else if (result.index) {
+        const idx = result.index;
+        const watcherStatus = idx.watcherRunning ? `✓ watching (PID ${idx.watcherPid})` : '○ not watching';
+
+        console.log('\n📊 lgrep stats\n');
+        console.log(`Index: ${idx.name}`);
+        console.log(`Path: ${idx.rootPath}`);
+        console.log(`Status: ${idx.status}`);
+        console.log(`Model: ${idx.model || 'default'}`);
+        console.log(`Created: ${idx.createdAt || 'unknown'}`);
+        console.log(`Updated: ${idx.updatedAt || 'unknown'}`);
+        console.log();
+        console.log(`Files:        ${idx.files}`);
+        console.log(`Chunks:       ${idx.chunks}`);
+        console.log(`Symbols:      ${idx.symbols}`);
+        console.log(`Calls:        ${idx.calls}`);
+        console.log(`Dependencies: ${idx.dependencies}`);
+        console.log();
+        console.log(`Watcher: ${watcherStatus}`);
+        console.log(`Database: ${formatSize(result.dbSizeBytes)}`);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Logs command - view watcher daemon logs
+program
+  .command('logs')
+  .description('View watcher daemon logs')
+  .option('-i, --index <name>', 'Index to show logs for (auto-detected if not specified)')
+  .option('-n, --lines <n>', 'Number of lines to show (default: 50)', '50')
+  .option('-f, --follow', 'Follow logs in real-time (like tail -f)')
+  .option('-a, --all', 'Show logs for all watchers')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { index?: string; lines?: string; follow?: boolean; all?: boolean; json?: boolean }) => {
+    try {
+      const lines = parseInt(options.lines || '50', 10);
+
+      // Follow mode
+      if (options.follow) {
+        let indexName: string = options.index ?? '';
+        if (!indexName) {
+          const detected = await detectIndexForDirectory(process.cwd());
+          indexName = detected ?? (await import('node:path')).basename(process.cwd());
+        }
+        await followLogs(indexName);
+        return;
+      }
+
+      const result = await runLogsCommand({
+        index: options.index,
+        lines,
+        all: options.all,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('logs', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+
+      if (result.logs) {
+        for (const log of result.logs) {
+          console.log(`\n=== ${log.indexName} (${log.logPath}) ===\n`);
+          if (log.content) {
+            console.log(log.content);
+          }
+        }
+      } else if (result.log) {
+        console.log(`\n=== ${result.log.indexName} ===\n`);
+        if (result.log.content) {
+          console.log(result.log.content);
+        }
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Symbols command - quick symbol lookup
+program
+  .command('symbols [query]')
+  .description('Quick symbol lookup by name')
+  .option('-i, --index <name>', 'Index to search (auto-detected if not specified)')
+  .option('-k, --kind <kind>', 'Filter by kind (function, class, method, etc.)')
+  .option('-f, --file <pattern>', 'Filter by file path pattern')
+  .option('-l, --limit <n>', 'Maximum results (default: 50)', '50')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (query: string | undefined, options: { index?: string; kind?: string; file?: string; limit?: string; json?: boolean }) => {
+    try {
+      const limit = parseInt(options.limit || '50', 10);
+
+      const result = await runSymbolsCommand(query, {
+        index: options.index,
+        kind: options.kind,
+        file: options.file,
+        limit,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('symbols', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+
+      if (!result.matches || result.matches.length === 0) {
+        console.log('No symbols found.');
+        return;
+      }
+
+      console.log(`\nFound ${result.total} symbol(s)${result.total! > result.matches.length ? ` (showing ${result.matches.length})` : ''}:\n`);
+
+      for (const sym of result.matches) {
+        const sig = sym.signature ? ` ${sym.signature}` : '';
+        console.log(`  ${sym.kind.padEnd(10)} ${sym.name}${sig}`);
+        console.log(`             ${sym.file}:${sym.line}`);
+        if (sym.summary) {
+          console.log(`             ${sym.summary.slice(0, 80)}${sym.summary.length > 80 ? '...' : ''}`);
+        }
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Explain command - AI-powered code explanation
+program
+  .command('explain <target>')
+  .description('AI-powered explanation of a file or symbol')
+  .option('-i, --index <name>', 'Index to use for context (auto-detected if not specified)')
+  .option('-m, --model <model>', 'AI model to use (auto-detected if not specified)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (target: string, options: { index?: string; model?: string; json?: boolean }) => {
+    try {
+      if (!options.json) {
+        console.log(`\nExplaining "${target}"...\n`);
+      }
+
+      const result = await runExplainCommand(target, {
+        index: options.index,
+        model: options.model,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('explain', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+
+      console.log(`Target: ${result.target} (${result.targetType})`);
+      if (result.model) {
+        console.log(`Model: ${result.model}`);
+      }
+      if (result.context) {
+        const ctx = result.context;
+        const parts = [];
+        if (ctx.symbols) parts.push(`${ctx.symbols} symbols`);
+        if (ctx.callers !== undefined) parts.push(`${ctx.callers} callers`);
+        if (ctx.callees !== undefined) parts.push(`${ctx.callees} callees`);
+        if (parts.length > 0) {
+          console.log(`Context: ${parts.join(', ')}`);
+        }
+      }
+      console.log('\n' + '─'.repeat(50) + '\n');
+      console.log(result.explanation);
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));

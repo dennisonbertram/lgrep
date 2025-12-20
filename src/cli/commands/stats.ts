@@ -11,7 +11,7 @@ import { DaemonManager } from '../../daemon/manager.js';
  */
 export interface IndexStats {
   name: string;
-  path: string;
+  rootPath: string;
   status: string;
   createdAt?: string;
   updatedAt?: string;
@@ -65,20 +65,20 @@ async function getIndexStats(
   if (!handle) return null;
 
   // Get counts
-  const chunkCount = await getChunkCount(handle);
-  const symbols = await getSymbols(handle);
-  const calls = await getCalls(handle);
-  const deps = await getDependencies(handle);
+  const chunkCount = await getChunkCount(db, handle);
+  const symbols = await getSymbols(db, indexName);
+  const calls = await getCalls(db, indexName);
+  const deps = await getDependencies(db, indexName);
 
   // Get unique files from symbols
-  const uniqueFiles = new Set(symbols.map(s => s.file));
+  const uniqueFiles = new Set(symbols.map(s => s.filePath));
 
   // Check watcher status
   const daemonInfo = await manager.status(indexName);
 
   return {
     name: indexName,
-    path: handle.metadata.path,
+    rootPath: handle.metadata.rootPath,
     status: handle.metadata.status,
     createdAt: handle.metadata.createdAt,
     updatedAt: handle.metadata.updatedAt,
@@ -108,23 +108,38 @@ export async function runStatsCommand(options: StatsOptions = {}): Promise<Stats
     };
   }
 
-  // Get database size
+  // Get database size (approximate)
   let dbSizeBytes: number | undefined;
   try {
     const stat = statSync(dbPath);
     if (stat.isDirectory()) {
-      // Sum up all files in the directory (approximate)
+      // Simple approximation - just count direct children
       const { readdirSync } = await import('node:fs');
-      const files = readdirSync(dbPath, { recursive: true, withFileTypes: true });
+      const entries = readdirSync(dbPath);
       dbSizeBytes = 0;
-      for (const file of files) {
-        if (file.isFile()) {
-          try {
-            const filePath = resolve(file.parentPath || file.path, file.name);
-            dbSizeBytes += statSync(filePath).size;
-          } catch {
-            // Ignore files we can't stat
+      for (const entry of entries) {
+        try {
+          const filePath = resolve(dbPath, entry);
+          const fileStat = statSync(filePath);
+          if (fileStat.isFile()) {
+            dbSizeBytes += fileStat.size;
+          } else if (fileStat.isDirectory()) {
+            // Add subdirectory size estimate (rough)
+            const subEntries = readdirSync(filePath);
+            for (const subEntry of subEntries) {
+              try {
+                const subPath = resolve(filePath, subEntry);
+                const subStat = statSync(subPath);
+                if (subStat.isFile()) {
+                  dbSizeBytes += subStat.size;
+                }
+              } catch {
+                // Ignore
+              }
+            }
           }
+        } catch {
+          // Ignore files we can't stat
         }
       }
     } else {
@@ -174,15 +189,10 @@ export async function runStatsCommand(options: StatsOptions = {}): Promise<Stats
     }
 
     // Get specific index or auto-detect
-    let indexName = options.index;
+    let indexName: string = options.index ?? '';
     if (!indexName) {
       const detected = await detectIndexForDirectory(process.cwd());
-      if (detected) {
-        indexName = detected.indexName;
-      } else {
-        // Try directory name
-        indexName = basename(process.cwd());
-      }
+      indexName = detected ?? basename(process.cwd());
     }
 
     const stats = await getIndexStats(db, indexName, manager);

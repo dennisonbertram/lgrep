@@ -144,7 +144,7 @@ function getParamCount(signature?: string): number | undefined {
     return undefined;
   }
 
-  const params = match[1].trim();
+  const params = match[1]?.trim() ?? '';
   if (params === '') {
     return 0;
   }

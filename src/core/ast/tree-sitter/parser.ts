@@ -6,10 +6,10 @@
 import { createHash } from 'node:crypto';
 import { getTreeSitterGrammar, isSupportedExtension } from '../languages.js';
 
-import type { TreeSitterParser, TreeSitterLanguage } from './types.js';
+import type { SyntaxNode, Tree, TreeSitterLanguage, TreeSitterParser } from './types.js';
 
 // Lazy-loaded language modules - use unknown to avoid type conflicts
-let Parser: typeof TreeSitterParser | null = null;
+let Parser: (new () => TreeSitterParser) | null = null;
 let Go: TreeSitterLanguage | null = null;
 let Rust: TreeSitterLanguage | null = null;
 let Python: TreeSitterLanguage | null = null;
@@ -38,9 +38,9 @@ async function getParserForLanguage(grammarName: string): Promise<TreeSitterPars
   if (!parserPool.has(grammarName)) {
     const TreeSitterModule = await import('tree-sitter');
     if (!Parser) {
-      Parser = TreeSitterModule.default as typeof TreeSitterParser;
+      Parser = TreeSitterModule.default as unknown as new () => TreeSitterParser;
     }
-    const parser = new (Parser as new () => TreeSitterParser)();
+    const parser = new Parser();
     const grammar = await loadGrammar(grammarName);
     parser.setLanguage(grammar);
     parserPool.set(grammarName, parser);
@@ -141,12 +141,14 @@ export async function parseCode(
 
       // LRU eviction
       if (treeCache.size >= MAX_CACHE_SIZE) {
-        const firstKey = treeCache.keys().next().value;
-        const evicted = treeCache.get(firstKey);
-        if (evicted?.tree?.delete) {
-          evicted.tree.delete();
+        const firstKey = treeCache.keys().next().value as string | undefined;
+        if (firstKey) {
+          const evicted = treeCache.get(firstKey);
+          if (evicted?.tree?.delete) {
+            evicted.tree.delete();
+          }
+          treeCache.delete(firstKey);
         }
-        treeCache.delete(firstKey);
       }
 
       treeCache.set(cacheKey, { hash, tree, language: grammarName });
