@@ -243,16 +243,16 @@ export async function analyzeFile(
   }
 
   // Extract symbols
-  const symbols = extractSymbols(code, filePath, relativePath, extension);
+  const symbols = await extractSymbols(code, filePath, relativePath, extension);
 
   // Extract dependencies
-  const rawDeps = extractDependencies(code, filePath);
+  const rawDeps = await extractDependencies(code, filePath);
   const dependencies = rawDeps.map(dep =>
     convertDependency(dep, filePath, 1)
   );
 
   // Extract calls
-  const rawCalls = extractCalls(code, filePath);
+  const rawCalls = await extractCalls(code, filePath);
   const calls = rawCalls.map(call =>
     convertCall(call, filePath, relativePath)
   );
@@ -298,16 +298,11 @@ export async function analyzeProject(
         // Specific file within directory
         filesToAnalyze = [options.file];
       } else {
-        // All JS/TS files in directory
+        // All code files in directory (JS/TS, Solidity, and tree-sitter supported languages)
+        const CODE_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.sol', '.go', '.rs', '.py', '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.java'];
         const walkResults = await walkFiles(rootPath);
         filesToAnalyze = walkResults
-          .filter(
-            r =>
-              r.extension === '.js' ||
-              r.extension === '.ts' ||
-              r.extension === '.jsx' ||
-              r.extension === '.tsx'
-          )
+          .filter(r => CODE_EXTENSIONS.includes(r.extension))
           .map(r => r.absolutePath);
       }
     }

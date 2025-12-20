@@ -3,13 +3,14 @@ import { buildContext } from '../../core/context-builder.js';
 import { loadConfig } from '../../storage/config.js';
 import { openDatabase, getIndex } from '../../storage/lance.js';
 import { getDbPath } from '../utils/paths.js';
+import { detectIndexForDirectory } from '../utils/auto-detect.js';
 import type { ContextPackage } from '../../types/context.js';
 
 /**
  * Options for the context command.
  */
 export interface ContextCommandOptions {
-  index: string;
+  index?: string;
   limit?: number;
   maxTokens?: number;
   depth?: number;
@@ -31,6 +32,23 @@ export async function runContextCommand(
     throw new Error('Task description is required');
   }
 
+  // Auto-detect index if not provided
+  let indexName: string;
+  if (options.index) {
+    indexName = options.index;
+  } else {
+    const detected = await detectIndexForDirectory();
+    if (!detected) {
+      throw new Error(
+        'No index found for current directory. Either:\n' +
+        '  1. Use --index <name> to specify an index\n' +
+        '  2. Run `lgrep index .` to index the current directory\n' +
+        '  3. Navigate to an indexed directory'
+      );
+    }
+    indexName = detected;
+  }
+
   // Load configuration
   const config = await loadConfig();
 
@@ -40,9 +58,9 @@ export async function runContextCommand(
 
   try {
     // Get the index
-    const handle = await getIndex(db, options.index);
+    const handle = await getIndex(db, indexName);
     if (!handle) {
-      throw new Error(`Index "${options.index}" not found. Create one with: lgrep index <path> -n ${options.index}`);
+      throw new Error(`Index "${indexName}" not found. Create one with: lgrep index <path> -n ${indexName}`);
     }
 
     // Create embedding client using the model from index metadata
@@ -52,7 +70,7 @@ export async function runContextCommand(
 
     // Build context
     const contextPackage = await buildContext(
-      { db, indexName: options.index, embeddingClient },
+      { db, indexName, embeddingClient },
       task,
       {
         limit: options.limit ?? config.contextFileLimit ?? 15,

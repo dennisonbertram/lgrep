@@ -16,7 +16,8 @@ export type SymbolKind =
   | 'interface'
   | 'type_alias'
   | 'enum'
-  | 'enum_member';
+  | 'enum_member'
+  | 'event';
 
 /**
  * A code symbol extracted from source code

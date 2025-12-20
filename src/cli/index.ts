@@ -10,6 +10,9 @@ import { runWatchCommand } from './commands/watch.js';
 import { runStopCommand } from './commands/stop.js';
 import { runSetupCommand } from './commands/setup.js';
 import { runInstallCommand } from './commands/install.js';
+import { runCallersCommand } from './commands/callers.js';
+import { runDepsCommand } from './commands/deps.js';
+import { runImpactCommand } from './commands/impact.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { openDatabase, deleteIndex } from '../storage/lance.js';
 import { getDbPath } from './utils/paths.js';
@@ -197,7 +200,7 @@ program
 program
   .command('search [query]')
   .description('Search indexed content with code intelligence')
-  .option('-i, --index <name>', 'Index to search (required)')
+  .option('-i, --index <name>', 'Index to search (auto-detected from current directory if not specified)')
   .option('-l, --limit <number>', 'Maximum results', '10')
   .option('-d, --diversity <lambda>', 'Diversity parameter (0.0=max diversity, 1.0=pure relevance)', '0.7')
   .option('--usages <symbol>', 'Find usages of a symbol')
@@ -461,7 +464,7 @@ program
 program
   .command('context <task>')
   .description('Build context for a task (for LLM consumption)')
-  .requiredOption('-i, --index <name>', 'Index to search')
+  .option('-i, --index <name>', 'Index to search (auto-detected from current directory if not specified)')
   .option('-l, --limit <n>', 'Max files to include', '15')
   .option('--max-tokens <n>', 'Token budget', '32000')
   .option('--depth <n>', 'Graph traversal depth', '2')
@@ -470,7 +473,7 @@ program
   .option('--format <type>', 'Output format (json|markdown)', 'json')
   .option('-j, --json', 'JSON output (same as --format json)')
   .action(async (task: string, options: {
-    index: string;
+    index?: string;
     limit?: string;
     maxTokens?: string;
     depth?: string;
@@ -552,6 +555,137 @@ program
       } else {
         console.log(`Stopped watcher for '${result.indexName}'`);
       }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Callers command - shows all locations that call a given function
+program
+  .command('callers <symbol>')
+  .description('Show all locations that call a given function/method')
+  .option('-i, --index <name>', 'Index to search (auto-detected from current directory if not specified)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (symbol: string, options: { index?: string; json?: boolean }) => {
+    try {
+      const result = await runCallersCommand(symbol, {
+        index: options.index,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('callers', result));
+        return;
+      }
+
+      if (result.callers!.length === 0) {
+        console.log(`No callers found for "${symbol}".`);
+        return;
+      }
+
+      console.log(`Callers of "${symbol}":\n`);
+      for (const caller of result.callers!) {
+        const callerInfo = caller.callerName ? ` in ${caller.callerName}()` : '';
+        console.log(`  ${caller.file}:${caller.line}${callerInfo}`);
+      }
+      console.log(`\n${result.count} caller${result.count === 1 ? '' : 's'} found`);
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Deps command - shows what modules import/depend on a given module
+program
+  .command('deps <module>')
+  .description('Show what modules import/depend on a given module')
+  .option('-i, --index <name>', 'Index to search (auto-detected from current directory if not specified)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (module: string, options: { index?: string; json?: boolean }) => {
+    try {
+      const result = await runDepsCommand(module, {
+        index: options.index,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('deps', result));
+        return;
+      }
+
+      if (result.dependents!.length === 0) {
+        console.log(`No dependents found for "${module}".`);
+        return;
+      }
+
+      console.log(`Dependents of "${module}":\n`);
+      for (const dep of result.dependents!) {
+        const imports = dep.imports.length > 0 ? ` (imports: ${dep.imports.join(', ')})` : '';
+        console.log(`  ${dep.file}${imports}`);
+      }
+      console.log(`\n${result.count} dependent${result.count === 1 ? '' : 's'} found`);
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Impact command - combines callers with transitive analysis
+program
+  .command('impact <symbol>')
+  .description('Show the blast radius if you change a function (direct callers + transitive impact)')
+  .option('-i, --index <name>', 'Index to search (auto-detected from current directory if not specified)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (symbol: string, options: { index?: string; json?: boolean }) => {
+    try {
+      const result = await runImpactCommand(symbol, {
+        index: options.index,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('impact', result));
+        return;
+      }
+
+      console.log(`Impact analysis for "${symbol}":\n`);
+
+      if (result.directCallers!.length === 0) {
+        console.log('No direct callers found.');
+        console.log('\nTotal: 0 files potentially affected');
+        return;
+      }
+
+      console.log(`Direct callers (${result.directCallers!.length}):`);
+      for (const caller of result.directCallers!) {
+        const callerInfo = caller.callerName ? ` → ${caller.callerName}()` : '';
+        console.log(`  ${caller.file}:${caller.line}${callerInfo}`);
+      }
+
+      if (result.transitiveFiles!.length > 0) {
+        console.log(`\nTransitive impact (${result.transitiveFiles!.length} more file${result.transitiveFiles!.length === 1 ? '' : 's'}):`);
+        for (const file of result.transitiveFiles!.slice(0, 10)) {
+          console.log(`  ${file}`);
+        }
+        if (result.transitiveFiles!.length > 10) {
+          console.log(`  ... and ${result.transitiveFiles!.length - 10} more`);
+        }
+      }
+
+      console.log(`\nTotal: ${result.totalFiles} file${result.totalFiles === 1 ? '' : 's'} potentially affected`);
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));

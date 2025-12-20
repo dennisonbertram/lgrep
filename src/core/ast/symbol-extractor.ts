@@ -1,11 +1,15 @@
 /**
- * Symbol extraction from JavaScript/TypeScript code using Babel AST
+ * Symbol extraction from JavaScript/TypeScript code using Babel AST,
+ * Solidity code using @solidity-parser/parser,
+ * and multi-language support using tree-sitter
  */
 
 import * as parser from '@babel/parser';
 import traverseDefault, { type NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import type { CodeSymbol, SymbolKind } from './types.js';
+import { parse as parseSolidity, visit } from '@solidity-parser/parser';
+import { isSupportedByTreeSitter, extractSymbolsTreeSitter } from './tree-sitter/index.js';
 
 // Handle CommonJS default export
 const traverse = (traverseDefault as unknown as { default: typeof traverseDefault }).default || traverseDefault;
@@ -13,12 +17,22 @@ const traverse = (traverseDefault as unknown as { default: typeof traverseDefaul
 /**
  * Extract code symbols from source code
  */
-export function extractSymbols(
+export async function extractSymbols(
   code: string,
   filePath: string,
   relativePath: string,
   extension: string
-): CodeSymbol[] {
+): Promise<CodeSymbol[]> {
+  // Dispatch to Solidity extraction for .sol files
+  if (extension === '.sol') {
+    return extractSoliditySymbols(code, filePath, relativePath);
+  }
+
+  // Dispatch to tree-sitter for supported languages
+  if (isSupportedByTreeSitter(extension)) {
+    return extractSymbolsTreeSitter(code, filePath, relativePath, extension);
+  }
+
   try {
     // Determine parser plugins based on extension
     const plugins: parser.ParserPlugin[] = ['jsx'];
@@ -377,6 +391,351 @@ export function extractSymbols(
             modifiers: [],
           });
         }
+      },
+    });
+
+    return symbols;
+  } catch (error) {
+    // Gracefully handle parse errors
+    return [];
+  }
+}
+
+/**
+ * Extract symbols from Solidity source code
+ */
+function extractSoliditySymbols(
+  code: string,
+  filePath: string,
+  relativePath: string
+): CodeSymbol[] {
+  try {
+    // Parse Solidity code with error tolerance
+    const ast = parseSolidity(code, { loc: true, range: true, tolerant: true });
+
+    const symbols: CodeSymbol[] = [];
+    let currentContract: string | null = null;
+
+    // Helper to calculate line/column from location
+    const getLocation = (loc: { start: { line: number; column: number }; end: { line: number; column: number } } | undefined) => {
+      if (!loc) {
+        return { lineStart: 1, lineEnd: 1, columnStart: 0, columnEnd: 0 };
+      }
+      return {
+        lineStart: loc.start.line,
+        lineEnd: loc.end.line,
+        columnStart: loc.start.column,
+        columnEnd: loc.end.column,
+      };
+    };
+
+    // Helper to extract documentation comments
+    const getDocumentation = (node: unknown): string | undefined => {
+      // Solidity uses NatSpec comments (///, /** */)
+      // The parser doesn't preserve comments in the same way as Babel
+      // We'll need to search backwards in the code for comments
+      // For now, return undefined - can be enhanced later
+      return undefined;
+    };
+
+    // Visit AST nodes
+    // @ts-ignore - Solidity parser types are not well-defined
+    visit(ast, {
+      // @ts-ignore - Contract definition visitor
+      ContractDefinition: (node: {
+        name: string;
+        kind: string;
+        loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
+      }) => {
+        const loc = getLocation(node.loc);
+        const modifiers: string[] = [];
+
+        // Track contract kind (can be 'contract', 'library', 'interface', or 'abstract')
+        if (node.kind === 'library') {
+          modifiers.push('library');
+        } else if (node.kind === 'interface') {
+          modifiers.push('interface');
+        } else if (node.kind === 'abstract') {
+          modifiers.push('abstract');
+        }
+
+        currentContract = node.name;
+
+        const kind: SymbolKind = node.kind === 'interface' ? 'interface' : 'class';
+
+        symbols.push({
+          id: `${relativePath}:${node.name}:${kind}`,
+          name: node.name,
+          kind,
+          filePath,
+          relativePath,
+          ...loc,
+          isExported: false, // Solidity doesn't have exports in the same way
+          isDefaultExport: false,
+          documentation: getDocumentation(node),
+          modifiers,
+        });
+      },
+
+      // @ts-ignore - Function definition visitor
+      FunctionDefinition: (node: {
+        name: string | null;
+        visibility?: string;
+        stateMutability?: string | null;
+        isConstructor?: boolean;
+        isReceiveEther?: boolean;
+        isFallback?: boolean;
+        isVirtual?: boolean;
+        modifiers?: unknown[];
+        parameters?: { parameters?: unknown[] };
+        returnParameters?: { parameters?: unknown[] };
+        loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
+      }) => {
+        const loc = getLocation(node.loc);
+        const modifiers: string[] = [];
+
+        // Determine function name
+        let functionName: string;
+        if (node.isConstructor) {
+          functionName = 'constructor';
+        } else if (node.isReceiveEther) {
+          functionName = 'receive';
+        } else if (node.isFallback) {
+          functionName = 'fallback';
+        } else {
+          functionName = node.name || '(anonymous)';
+        }
+
+        // Add visibility modifiers
+        if (node.visibility) {
+          modifiers.push(node.visibility);
+        }
+
+        // Add state mutability modifiers
+        if (node.stateMutability) {
+          modifiers.push(node.stateMutability);
+        }
+
+        // Add virtual modifier
+        if (node.isVirtual) {
+          modifiers.push('virtual');
+        }
+
+        // Generate signature
+        const params = node.parameters?.parameters || [];
+        const returns = node.returnParameters?.parameters || [];
+        const signature = `function ${functionName}(${params.length} params)${returns.length > 0 ? ' returns' : ''}`;
+
+        symbols.push({
+          id: `${relativePath}:${currentContract ? currentContract + '.' : ''}${functionName}:function`,
+          name: functionName,
+          kind: 'function',
+          filePath,
+          relativePath,
+          ...loc,
+          isExported: false,
+          isDefaultExport: false,
+          signature,
+          documentation: getDocumentation(node),
+          parentId: currentContract ? `${relativePath}:${currentContract}:class` : undefined,
+          modifiers,
+        });
+      },
+
+      // Modifier definitions
+      // @ts-ignore - Modifier definition visitor
+      ModifierDefinition: (node: {
+        name: string;
+        parameters?: { parameters?: unknown[] };
+        loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
+      }) => {
+        const loc = getLocation(node.loc);
+        const modifiers: string[] = ['modifier'];
+
+        const params = node.parameters?.parameters || [];
+        const signature = `modifier ${node.name}(${params.length} params)`;
+
+        symbols.push({
+          id: `${relativePath}:${currentContract ? currentContract + '.' : ''}${node.name}:function`,
+          name: node.name,
+          kind: 'function',
+          filePath,
+          relativePath,
+          ...loc,
+          isExported: false,
+          isDefaultExport: false,
+          signature,
+          documentation: getDocumentation(node),
+          parentId: currentContract ? `${relativePath}:${currentContract}:class` : undefined,
+          modifiers,
+        });
+      },
+
+      // Event definitions
+      // @ts-ignore - Event definition visitor
+      EventDefinition: (node: {
+        name: string;
+        parameters?: { parameters?: unknown[] };
+        isAnonymous?: boolean;
+        loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
+      }) => {
+        const loc = getLocation(node.loc);
+        const modifiers: string[] = [];
+
+        if (node.isAnonymous) {
+          modifiers.push('anonymous');
+        }
+
+        symbols.push({
+          id: `${relativePath}:${currentContract ? currentContract + '.' : ''}${node.name}:event`,
+          name: node.name,
+          kind: 'event',
+          filePath,
+          relativePath,
+          ...loc,
+          isExported: false,
+          isDefaultExport: false,
+          documentation: getDocumentation(node),
+          parentId: currentContract ? `${relativePath}:${currentContract}:class` : undefined,
+          modifiers,
+        });
+      },
+
+      // @ts-ignore - State variable declaration visitor
+      // State variable declarations
+      StateVariableDeclaration: (node: {
+        variables?: Array<{
+          name: string;
+          visibility?: string;
+          isDeclaredConst?: boolean;
+          isImmutable?: boolean;
+          loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
+        }>;
+      }) => {
+        const variables = node.variables || [];
+
+        for (const variable of variables) {
+          const loc = getLocation(variable.loc);
+          const modifiers: string[] = [];
+
+          if (variable.visibility) {
+            modifiers.push(variable.visibility);
+          }
+
+          if (variable.isDeclaredConst) {
+            modifiers.push('constant');
+          }
+
+          if (variable.isImmutable) {
+            modifiers.push('immutable');
+          }
+
+          symbols.push({
+            id: `${relativePath}:${currentContract ? currentContract + '.' : ''}${variable.name}:variable`,
+            name: variable.name,
+            kind: 'variable',
+            filePath,
+            relativePath,
+            ...loc,
+            isExported: false,
+            isDefaultExport: false,
+            documentation: getDocumentation(variable),
+            parentId: currentContract ? `${relativePath}:${currentContract}:class` : undefined,
+            modifiers,
+          });
+        }
+      },
+
+      // Struct definitions
+      // @ts-ignore - Struct definition visitor
+      StructDefinition: (node: {
+        name: string;
+        loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
+      }) => {
+        const loc = getLocation(node.loc);
+
+        symbols.push({
+          id: `${relativePath}:${currentContract ? currentContract + '.' : ''}${node.name}:interface`,
+          name: node.name,
+          kind: 'interface',
+          filePath,
+          relativePath,
+          ...loc,
+          isExported: false,
+          isDefaultExport: false,
+          documentation: getDocumentation(node),
+          parentId: currentContract ? `${relativePath}:${currentContract}:class` : undefined,
+          modifiers: [],
+        });
+      },
+
+      // Enum definitions
+      // @ts-ignore - Enum definition visitor
+      EnumDefinition: (node: {
+        name: string;
+        members?: Array<{ name: string }>;
+        loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
+      }) => {
+        const loc = getLocation(node.loc);
+        const enumName = node.name;
+
+        symbols.push({
+          id: `${relativePath}:${currentContract ? currentContract + '.' : ''}${enumName}:enum`,
+          name: enumName,
+          kind: 'enum',
+          filePath,
+          relativePath,
+          ...loc,
+          isExported: false,
+          isDefaultExport: false,
+          documentation: getDocumentation(node),
+          parentId: currentContract ? `${relativePath}:${currentContract}:class` : undefined,
+          modifiers: [],
+        });
+
+        // Extract enum members
+        const members = node.members || [];
+        for (const member of members) {
+          symbols.push({
+            id: `${relativePath}:${currentContract ? currentContract + '.' : ''}${enumName}.${member.name}:enum_member`,
+            name: member.name,
+            kind: 'enum_member',
+            filePath,
+            relativePath,
+            lineStart: loc.lineStart,
+            lineEnd: loc.lineEnd,
+            columnStart: loc.columnStart,
+            columnEnd: loc.columnEnd,
+            isExported: false,
+            isDefaultExport: false,
+            parentId: `${relativePath}:${currentContract ? currentContract + '.' : ''}${enumName}:enum`,
+            modifiers: [],
+          });
+        }
+      },
+
+      // Custom error definitions
+      // @ts-ignore - Custom error definition visitor
+      CustomErrorDefinition: (node: {
+        name: string;
+        parameters?: { parameters?: unknown[] };
+        loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
+      }) => {
+        const loc = getLocation(node.loc);
+
+        symbols.push({
+          id: `${relativePath}:${currentContract ? currentContract + '.' : ''}${node.name}:type_alias`,
+          name: node.name,
+          kind: 'type_alias',
+          filePath,
+          relativePath,
+          ...loc,
+          isExported: false,
+          isDefaultExport: false,
+          documentation: getDocumentation(node),
+          parentId: currentContract ? `${relativePath}:${currentContract}:class` : undefined,
+          modifiers: [],
+        });
       },
     });
 

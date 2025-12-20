@@ -1,6 +1,8 @@
 import { parse } from '@babel/parser';
 import traverseDefault, { type NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
+import { parse as parseSolidity, visit } from '@solidity-parser/parser';
+import { isSupportedByTreeSitter, extractCallsTreeSitter } from './tree-sitter/index.js';
 
 // Handle CommonJS default export
 const traverse = (traverseDefault as unknown as { default: typeof traverseDefault }).default || traverseDefault;
@@ -80,16 +82,26 @@ function buildCallerContext(scopeStack: string[]): string | null {
 /**
  * Extract all function calls from source code
  */
-export function extractCalls(code: string, filePath: string): FunctionCall[] {
+export async function extractCalls(code: string, filePath: string): Promise<FunctionCall[]> {
   if (!code.trim()) {
     return [];
+  }
+
+  // Dispatch to Solidity extraction for .sol files
+  const extension = filePath.split('.').pop() || '';
+  if (extension === 'sol') {
+    return extractSolidityCalls(code, filePath);
+  }
+
+  // Dispatch to tree-sitter for supported languages
+  if (isSupportedByTreeSitter(`.${extension}`)) {
+    return extractCallsTreeSitter(code, filePath, `.${extension}`);
   }
 
   const calls: FunctionCall[] = [];
   const scopeStack: string[] = [];
 
   // Determine parser plugins based on file extension
-  const extension = filePath.split('.').pop() || '';
   const plugins: ('jsx' | 'typescript' | 'decorators-legacy')[] = ['jsx'];
   if (extension === 'ts' || extension === 'tsx') {
     plugins.push('typescript', 'decorators-legacy');
@@ -272,4 +284,160 @@ function getParentClassName(path: NodePath): string | null {
   }
 
   return null;
+}
+
+/**
+ * Extract function calls from Solidity source code
+ */
+function extractSolidityCalls(code: string, filePath: string): FunctionCall[] {
+  try {
+    const ast = parseSolidity(code, { loc: true, range: true, tolerant: true });
+
+    const calls: FunctionCall[] = [];
+    const scopeStack: string[] = [];
+
+    // Visit AST nodes
+    // @ts-ignore - Solidity parser types are not well-defined
+    visit(ast, {
+      // @ts-ignore - Track function definitions for caller context
+      FunctionDefinition: (node: { name: string | null; isConstructor?: boolean; isReceiveEther?: boolean; isFallback?: boolean }) => {
+        let functionName: string;
+        if (node.isConstructor) {
+          functionName = 'constructor';
+        } else if (node.isReceiveEther) {
+          functionName = 'receive';
+        } else if (node.isFallback) {
+          functionName = 'fallback';
+        } else {
+          functionName = node.name || '(anonymous)';
+        }
+        scopeStack.push(functionName);
+      },
+
+      // @ts-ignore - Track modifiers
+      // Track modifiers for caller context
+      ModifierDefinition: (node: { name: string }) => {
+        scopeStack.push(node.name);
+      },
+
+      // @ts-ignore - Function calls
+      // Function calls (direct calls like foo())
+      FunctionCall: (node: {
+        expression: { type: string; name?: string; memberName?: string };
+        arguments?: unknown[];
+        names?: unknown[];
+        loc?: { start: { line: number; column: number } };
+      }) => {
+        const expression = node.expression;
+        let callee: string;
+        let receiver: string | undefined;
+        let callType: 'function' | 'method' = 'function';
+
+        if (expression.type === 'Identifier' && expression.name) {
+          // Simple function call: foo()
+          callee = expression.name;
+        } else if (expression.type === 'MemberAccess' && expression.memberName) {
+          // Method call: obj.foo()
+          callType = 'method';
+          callee = expression.memberName;
+          // Try to get receiver name (simplified)
+          // @ts-ignore - Type mismatch with Solidity parser types
+          receiver = getReceiverName(expression);
+        } else {
+          callee = '(unknown)';
+        }
+
+        calls.push({
+          callee,
+          caller: scopeStack.length > 0 ? scopeStack.join('.') : null,
+          receiver,
+          type: callType,
+          argumentCount: node.arguments?.length || 0,
+          line: node.loc?.start.line,
+          column: node.loc?.start.column,
+        });
+      },
+
+      // Event emissions (emit Transfer(...))
+      EmitStatement: (node: {
+        eventCall: {
+          expression: { type: string; name?: string };
+          arguments?: unknown[];
+        };
+        loc?: { start: { line: number; column: number } };
+      }) => {
+      // @ts-ignore - Event emissions
+        const expression = node.eventCall.expression;
+        if (expression.type === 'Identifier' && expression.name) {
+          calls.push({
+            callee: expression.name,
+            caller: scopeStack.length > 0 ? scopeStack.join('.') : null,
+            type: 'function',
+            argumentCount: node.eventCall.arguments?.length || 0,
+            line: node.loc?.start.line,
+            column: node.loc?.start.column,
+          });
+        }
+      },
+
+      // New expressions (new MyContract())
+      NewExpression: (node: {
+        typeName: { type: string; namePath?: string; name?: string };
+        loc?: { start: { line: number; column: number } };
+      }) => {
+        let callee: string;
+        if (node.typeName.type === 'UserDefinedTypeName' && node.typeName.namePath) {
+          callee = node.typeName.namePath;
+      // @ts-ignore - New expressions
+        } else if (node.typeName.name) {
+          callee = node.typeName.name;
+        } else {
+          callee = '(unknown)';
+        }
+
+        calls.push({
+          callee,
+          caller: scopeStack.length > 0 ? scopeStack.join('.') : null,
+          type: 'constructor',
+          argumentCount: 0, // Arguments aren't on NewExpression in this parser
+          line: node.loc?.start.line,
+          column: node.loc?.start.column,
+        });
+      },
+    });
+
+    return calls;
+  } catch (error) {
+    // Gracefully handle parse errors
+    return [];
+  }
+}
+
+/**
+ * Helper to extract receiver name from Solidity MemberAccess expression
+ */
+function getReceiverName(expression: { expression?: unknown }): string | undefined {
+  if (!expression.expression) {
+    return undefined;
+  }
+
+  const expr = expression.expression as {
+    type?: string;
+    name?: string;
+    memberName?: string;
+    expression?: unknown;
+  };
+
+  if (expr.type === 'Identifier' && expr.name) {
+    return expr.name;
+  } else if (expr.type === 'MemberAccess') {
+    // Nested member access - simplified version
+    const nested = getReceiverName(expr);
+    if (nested && expr.memberName) {
+      return `${nested}.${expr.memberName}`;
+    }
+    return expr.memberName;
+  }
+
+  return undefined;
 }

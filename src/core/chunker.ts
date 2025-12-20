@@ -599,7 +599,7 @@ export function chunkCode(
   }
 
   // Check if extension is supported
-  const supportedExtensions = ['.js', '.jsx', '.ts', '.tsx'];
+  const supportedExtensions = ['.js', '.jsx', '.ts', '.tsx', '.sol', '.go', '.rs', '.py', '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.java'];
   if (!supportedExtensions.includes(extension)) {
     // Fallback to text chunking
     const chunks = chunkText(code, options);

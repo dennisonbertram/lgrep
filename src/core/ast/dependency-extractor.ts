@@ -1,6 +1,8 @@
 import { parse } from '@babel/parser';
 import traverseDefault from '@babel/traverse';
 import * as t from '@babel/types';
+import { parse as parseSolidity, visit } from '@solidity-parser/parser';
+import { isSupportedByTreeSitter, extractDependenciesTreeSitter } from './tree-sitter/index.js';
 
 // Handle CommonJS default export
 const traverse = (traverseDefault as unknown as { default: typeof traverseDefault }).default || traverseDefault;
@@ -87,15 +89,25 @@ function isExternalModule(source: string): boolean {
 /**
  * Extract all import/export dependencies from source code
  */
-export function extractDependencies(code: string, filePath: string): Dependency[] {
+export async function extractDependencies(code: string, filePath: string): Promise<Dependency[]> {
   if (!code.trim()) {
     return [];
+  }
+
+  // Dispatch to Solidity extraction for .sol files
+  const extension = filePath.split('.').pop() || '';
+  if (extension === 'sol') {
+    return extractSolidityDependencies(code, filePath);
+  }
+
+  // Dispatch to tree-sitter for supported languages
+  if (isSupportedByTreeSitter(`.${extension}`)) {
+    return extractDependenciesTreeSitter(code, filePath, `.${extension}`);
   }
 
   const dependencies: Dependency[] = [];
 
   // Determine parser plugins based on file extension
-  const extension = filePath.split('.').pop() || '';
   const plugins: ('jsx' | 'typescript' | 'decorators-legacy')[] = ['jsx'];
   if (extension === 'ts' || extension === 'tsx') {
     plugins.push('typescript', 'decorators-legacy');
@@ -272,4 +284,63 @@ export function extractDependencies(code: string, filePath: string): Dependency[
   });
 
   return dependencies;
+}
+
+/**
+ * Extract dependencies from Solidity source code
+ */
+function extractSolidityDependencies(code: string, filePath: string): Dependency[] {
+  try {
+    const ast = parseSolidity(code, { loc: true, range: true, tolerant: true });
+
+    const dependencies: Dependency[] = [];
+
+    // Visit AST nodes
+    // @ts-ignore - Solidity parser types are not well-defined
+    visit(ast, {
+      // @ts-ignore - Import directive visitor
+      ImportDirective: (node: {
+        path: string;
+        symbolAliases?: Array<[string, string | null]> | null;
+        unitAlias?: string | null;
+        loc?: { start: { line: number; column: number } };
+      }) => {
+        const source = node.path;
+        const imported: ImportedName[] = [];
+        let namespaceImport: string | undefined;
+
+        // Check for namespace import: import * as Utils from "./Utils.sol"
+        if (node.unitAlias) {
+          namespaceImport = node.unitAlias;
+        }
+
+        // Check for named imports: import { Token, IERC20 as ERC20 } from "./Token.sol"
+        if (node.symbolAliases && node.symbolAliases.length > 0) {
+          for (const [name, alias] of node.symbolAliases) {
+            imported.push({
+              name,
+              alias: alias || undefined,
+            });
+          }
+        }
+
+        dependencies.push({
+          type: 'import',
+          source,
+          default: undefined, // Solidity doesn't have default imports
+          namespace: namespaceImport,
+          imported,
+          isTypeOnly: false, // Solidity doesn't distinguish type imports
+          isExternal: isExternalModule(source),
+          line: node.loc?.start.line,
+          column: node.loc?.start.column,
+        });
+      },
+    });
+
+    return dependencies;
+  } catch (error) {
+    // Gracefully handle parse errors
+    return [];
+  }
 }

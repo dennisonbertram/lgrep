@@ -282,12 +282,12 @@ export async function runIndexCommand(
           }
         }
 
-        // Extract code intelligence for JS/TS files
-        const CODE_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx'];
+        // Extract code intelligence for JS/TS/Solidity and tree-sitter supported files
+        const CODE_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.sol', '.go', '.rs', '.py', '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.java'];
         if (CODE_EXTENSIONS.includes(file.extension)) {
           try {
             // Extract symbols
-            const rawSymbols = extractSymbols(
+            const rawSymbols = await extractSymbols(
               content,
               file.absolutePath,
               file.relativePath,
@@ -338,13 +338,13 @@ export async function runIndexCommand(
             }
 
             // Extract dependencies
-            const rawDeps = extractDependencies(content, file.absolutePath);
+            const rawDeps = await extractDependencies(content, file.absolutePath);
             const deps = convertDependencies(rawDeps, file.absolutePath);
             await addDependencies(db, indexName, deps);
             totalDependencies += deps.length;
 
             // Extract calls
-            const rawCalls = extractCalls(content, file.absolutePath);
+            const rawCalls = await extractCalls(content, file.absolutePath);
             const calls = convertCalls(rawCalls, file.absolutePath, file.relativePath);
             await addCalls(db, indexName, calls);
             totalCalls += calls.length;

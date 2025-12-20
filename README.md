@@ -9,6 +9,7 @@ npm install -g lgrep
 ## Features
 
 - **Semantic Search** - Find code by meaning, not just text matching
+- **Auto-Detection** - Automatically detects the right index from your current directory
 - **Multi-Provider AI** - Ollama (local), Anthropic, OpenAI, or Groq
 - **Code Intelligence** - Understands symbols, calls, and dependencies
 - **Privacy-First** - Run completely locally with Ollama
@@ -24,8 +25,12 @@ lgrep setup
 # Index your project
 lgrep index ./my-project
 
-# Search semantically
+# Search semantically (auto-detects index from current directory)
+cd my-project
 lgrep search "user authentication logic"
+
+# Or specify index explicitly
+lgrep search "user authentication logic" --index my-project
 
 # Find symbol usages
 lgrep search --usages "validateUser"
@@ -75,10 +80,16 @@ lgrep index ./src --force            # Full reindex
 
 ### `lgrep search <query>`
 
-Search indexed code semantically.
+Search indexed code semantically. The index is auto-detected from your current directory, or you can specify it explicitly with `--index`.
 
 ```bash
-lgrep search "error handling"        # Semantic search
+# Auto-detect index (when inside an indexed directory)
+lgrep search "error handling"
+
+# Specify index explicitly
+lgrep search "error handling" --index my-project
+
+# Code intelligence queries
 lgrep search --usages "fetchUser"    # Find all usages
 lgrep search --definition "Config"   # Find definitions
 lgrep search --type function "auth"  # Filter by symbol type
@@ -87,10 +98,16 @@ lgrep search "api" --limit 20        # Adjust result count
 
 ### `lgrep context <task>`
 
-Build context package for a coding task.
+Build context package for a coding task. The index is auto-detected from your current directory, or you can specify it explicitly with `--index`.
 
 ```bash
-lgrep context "implement caching"              # Get relevant files/symbols
+# Auto-detect index (when inside an indexed directory)
+lgrep context "implement caching"
+
+# Specify index explicitly
+lgrep context "implement caching" --index my-project
+
+# Additional options
 lgrep context "fix N+1 query" --suggest        # Include implementation steps
 lgrep context "add tests" --max-tokens 16000   # Limit context size
 ```

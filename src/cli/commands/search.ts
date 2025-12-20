@@ -10,6 +10,7 @@ import {
 import { getCalls, searchSymbols, getSymbols } from '../../storage/code-intel.js';
 import { getDbPath } from '../utils/paths.js';
 import { createSpinner } from '../utils/progress.js';
+import { detectIndexForDirectory } from '../utils/auto-detect.js';
 
 /**
  * Options for the search command.
@@ -115,12 +116,24 @@ export async function runSearchCommand(
       throw new Error('Diversity parameter must be between 0.0 and 1.0');
     }
 
-    // Must specify an index for now
-    if (!options.index) {
-      throw new Error('Index name is required. Use --index <name> to specify.');
+    // Auto-detect index if not provided
+    let indexName: string;
+    if (options.index) {
+      indexName = options.index;
+    } else {
+      spinner?.update('Auto-detecting index for current directory...');
+      const detected = await detectIndexForDirectory();
+      if (!detected) {
+        throw new Error(
+          'No index found for current directory. Either:\n' +
+          '  1. Use --index <name> to specify an index\n' +
+          '  2. Run `lgrep index .` to index the current directory\n' +
+          '  3. Navigate to an indexed directory'
+        );
+      }
+      indexName = detected;
+      spinner?.update(`Using auto-detected index "${indexName}"...`);
     }
-
-    const indexName = options.index;
 
     // Load config
     spinner?.update('Loading configuration...');
