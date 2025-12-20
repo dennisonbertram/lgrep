@@ -973,12 +973,14 @@ program
   .option('--skip-hook', 'Do not add SessionStart hook')
   .option('--skip-claude-md', 'Do not update ~/.claude/CLAUDE.md')
   .option('--add-to-project', 'Also add lgrep instructions to project CLAUDE.md')
+  .option('-y, --yes', 'Skip confirmation prompts')
   .option('-j, --json', 'Output as JSON')
   .action(async (options: {
     skipSkill?: boolean;
     skipHook?: boolean;
     skipClaudeMd?: boolean;
     addToProject?: boolean;
+    yes?: boolean;
     json?: boolean;
   }) => {
     try {
@@ -987,6 +989,7 @@ program
         skipHook: options.skipHook,
         skipClaudeMd: options.skipClaudeMd,
         addToProject: options.addToProject,
+        yes: options.yes,
         json: options.json,
       });
 

@@ -294,14 +294,30 @@ describe('install command', () => {
   });
 
   describe('user CLAUDE.md', () => {
-    it('should update user CLAUDE.md by default', async () => {
+    it('should update user CLAUDE.md with --yes flag', async () => {
       vi.mocked(fs.mkdir).mockResolvedValue(undefined);
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
+        yes: true,
         json: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.userClaudeMdUpdated).toBe(true);
+      expect(result.userClaudeMdPath).toContain('.claude/CLAUDE.md');
+    });
+
+    it('should update user CLAUDE.md with --json flag (no prompt)', async () => {
+      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+      const result = await runInstallCommand({
+        skipSkill: true,
+        skipHook: true,
+        json: true,
       });
 
       expect(result.success).toBe(true);
@@ -346,6 +362,7 @@ describe('install command', () => {
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
+        yes: true,
         json: false,
       });
 

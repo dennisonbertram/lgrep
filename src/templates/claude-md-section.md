@@ -72,7 +72,23 @@ lgrep list
 5. **Context builder first** - Use `lgrep context` for optimal file selection
 6. **JSON output** - Use `--json` for programmatic processing
 
-### Integration
+### Background Daemon
 
-The SessionStart hook automatically starts a watcher for the current directory.
-Use `lgrep watch .` to manually start watching, `lgrep stop <name>` to stop.
+lgrep runs a background watcher daemon for each indexed project:
+
+```bash
+# Check what's running
+lgrep list
+
+# Start watcher for current directory (auto-names from folder)
+lgrep watch .
+
+# Start with custom name
+lgrep watch /path/to/project --name myproject
+
+# Stop a watcher
+lgrep stop myproject
+```
+
+**Note**: The SessionStart hook auto-starts watchers when you open a project.
+If searches return no results, check `lgrep list` to verify the watcher is running.
