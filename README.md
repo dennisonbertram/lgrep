@@ -125,6 +125,34 @@ The following commands run against the same auto-detected index and re-use the c
 
 Each command supports `-i, --index`, `-l, --limit`, and `-j, --json` (when applicable) so you can script them like the existing CLI commands.
 
+### `lgrep graph`
+
+Open a local web UI to visualize how your code is connected as a graph.
+
+- **Dependencies**: file → file imports (default)
+- **Calls**: file → file call edges (best-effort, based on resolved callees)
+
+```bash
+# Auto-detect index (when inside an indexed directory)
+lgrep graph
+
+# Specify index explicitly
+lgrep graph --index my-project
+
+# Switch graph mode
+lgrep graph --mode calls
+lgrep graph --mode deps
+
+# Include external dependencies (deps mode)
+lgrep graph --external
+
+# Do not auto-open the browser
+lgrep graph --no-open
+
+# Bind to a specific port (default: 0 = random high port)
+lgrep graph --port 5050
+```
+
 
 ### `lgrep context <task>`
 

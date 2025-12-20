@@ -23,9 +23,6 @@
   "exclude": [
     "node_modules",
     "dist",
-    "**/*.test.ts",
-    "src/cli/commands/logs.ts",
-    "src/cli/commands/stats.ts",
-    "src/cli/commands/symbols.ts"
+    "**/*.test.ts"
   ]
 }

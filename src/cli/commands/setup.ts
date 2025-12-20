@@ -39,7 +39,12 @@ export async function runSetupCommand(
   try {
     // Load config to get model names
     const config = await loadConfig();
-    const embedModel = config.model;
+    // For setup, ensure we pull an Ollama embedding model.
+    // - If user explicitly configured an Ollama model, use it.
+    // - Otherwise (including 'auto' or cloud providers), pull the default local embed model.
+    const embedModel = config.model.startsWith('ollama:')
+      ? config.model.replace('ollama:', '')
+      : 'mxbai-embed-large';
 
     // For setup, resolve 'auto' to the default Ollama model since we're setting up local
     let summarizationModel: string | undefined;

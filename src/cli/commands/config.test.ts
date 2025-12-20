@@ -28,7 +28,7 @@ describe('config command', () => {
       const output = await runConfigCommand();
 
       expect(output).toContain('model');
-      expect(output).toContain('mxbai-embed-large');
+      expect(output).toContain('auto');
       expect(output).toContain('chunkSize');
     });
 
@@ -46,7 +46,7 @@ describe('config command', () => {
     it('should get a specific config value', async () => {
       const output = await runConfigCommand('model');
 
-      expect(output).toBe('mxbai-embed-large');
+      expect(output).toBe('auto');
     });
 
     it('should return error for non-existent key', async () => {
