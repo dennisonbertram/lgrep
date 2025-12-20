@@ -65,6 +65,7 @@ describe('install command', () => {
 
       const result = await runInstallCommand({
         skipHook: true,
+        skipClaudeMd: true,
         json: false,
       });
 
@@ -84,6 +85,7 @@ describe('install command', () => {
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
+        skipClaudeMd: true,
         json: false,
       });
 
@@ -97,6 +99,7 @@ describe('install command', () => {
 
       const result = await runInstallCommand({
         skipHook: true,
+        skipClaudeMd: true,
         json: false,
       });
 
@@ -141,6 +144,7 @@ describe('install command', () => {
 
       const result = await runInstallCommand({
         skipSkill: true,
+        skipClaudeMd: true,
         json: false,
       });
 
@@ -164,6 +168,7 @@ describe('install command', () => {
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
+        skipClaudeMd: true,
         json: false,
       });
 
@@ -216,6 +221,7 @@ describe('install command', () => {
 
       const result = await runInstallCommand({
         skipSkill: true,
+        skipClaudeMd: true,
         json: false,
       });
 
@@ -243,6 +249,7 @@ describe('install command', () => {
 
       const result = await runInstallCommand({
         skipSkill: true,
+        skipClaudeMd: true,
         json: false,
       });
 
@@ -273,6 +280,7 @@ describe('install command', () => {
 
       const result = await runInstallCommand({
         skipSkill: true,
+        skipClaudeMd: true,
         json: false,
       });
 
@@ -282,6 +290,68 @@ describe('install command', () => {
         path.join(mockHomedir, '.claude'),
         { recursive: true }
       );
+    });
+  });
+
+  describe('user CLAUDE.md', () => {
+    it('should update user CLAUDE.md by default', async () => {
+      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+      const result = await runInstallCommand({
+        skipSkill: true,
+        skipHook: true,
+        json: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.userClaudeMdUpdated).toBe(true);
+      expect(result.userClaudeMdPath).toContain('.claude/CLAUDE.md');
+    });
+
+    it('should skip user CLAUDE.md when --skip-claude-md flag is set', async () => {
+      const result = await runInstallCommand({
+        skipSkill: true,
+        skipHook: true,
+        skipClaudeMd: true,
+        json: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.userClaudeMdUpdated).toBe(false);
+    });
+
+    it('should not overwrite existing user CLAUDE.md lgrep section', async () => {
+      const mockClaudeMd = '# User Config\n\n## lgrep\n\nExisting lgrep config';
+
+      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+      vi.mocked(fs.access).mockImplementation((path) => {
+        if (path.toString().includes('.claude/CLAUDE.md')) {
+          return Promise.resolve(undefined);
+        }
+        return Promise.reject(new Error('ENOENT'));
+      });
+
+      vi.mocked(fs.readFile).mockImplementation((path) => {
+        const pathStr = path.toString();
+        if (pathStr.includes('.claude/CLAUDE.md')) {
+          return Promise.resolve(mockClaudeMd);
+        }
+        if (pathStr.includes('templates/claude-md-section.md')) {
+          return Promise.resolve(mockClaudeMdTemplate);
+        }
+        return Promise.reject(new Error('ENOENT'));
+      });
+
+      const result = await runInstallCommand({
+        skipSkill: true,
+        skipHook: true,
+        json: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.userClaudeMdUpdated).toBe(false);
+      expect(result.userClaudeMdAlreadyHasLgrep).toBe(true);
     });
   });
 
@@ -318,6 +388,7 @@ describe('install command', () => {
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
+        skipClaudeMd: true,
         addToProject: true,
         json: false,
       });
@@ -358,6 +429,7 @@ describe('install command', () => {
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
+        skipClaudeMd: true,
         addToProject: true,
         json: false,
       });
@@ -371,6 +443,7 @@ describe('install command', () => {
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
+        skipClaudeMd: true,
         json: false,
       });
 
@@ -385,12 +458,14 @@ describe('install command', () => {
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
       const result = await runInstallCommand({
+        skipClaudeMd: true,
         json: true,
       });
 
       expect(result).toHaveProperty('success');
       expect(result).toHaveProperty('skillCreated');
       expect(result).toHaveProperty('hookAdded');
+      expect(result).toHaveProperty('userClaudeMdUpdated');
       expect(result.success).toBe(true);
       // When successful, paths should be set
       if (result.skillCreated) {
@@ -407,6 +482,7 @@ describe('install command', () => {
       vi.mocked(fs.writeFile).mockRejectedValue(new Error('Permission denied'));
 
       const result = await runInstallCommand({
+        skipClaudeMd: true,
         json: false,
       });
 
@@ -440,6 +516,7 @@ describe('install command', () => {
 
       const result = await runInstallCommand({
         skipSkill: true,
+        skipClaudeMd: true,
         json: false,
       });
 

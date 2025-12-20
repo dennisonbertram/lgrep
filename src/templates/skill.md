@@ -1,21 +1,25 @@
 ---
 name: lgrep-search
-description: "Local semantic code search with automatic context building. Use when searching code, understanding codebases, building context for tasks, or finding where functionality is implemented. Trigger phrases: 'search for code', 'find where', 'understand this codebase', 'how does X work', 'build context for', 'what files handle', 'show me the implementation of'."
+description: "Local semantic code search with automatic context building and refactoring analysis. Use when searching code, understanding codebases, building context for tasks, finding dead code, analyzing refactoring impact, or detecting circular dependencies. Trigger phrases: 'search for code', 'find where', 'understand this codebase', 'how does X work', 'build context for', 'what files handle', 'show me the implementation of', 'what calls', 'find dead code', 'unused exports', 'circular dependencies', 'refactor', 'rename', 'impact of changing'."
 ---
 
 # lgrep - Local Semantic Code Search
 
 ## Overview
 
-lgrep is a privacy-first local semantic search tool that helps you quickly find and understand code. It uses local embeddings (via Ollama) to provide mixedbread.ai-quality semantic search without sending your code to the cloud.
+lgrep is a privacy-first local semantic search tool that helps you quickly find, understand, and analyze code. It uses local embeddings (via Ollama) to provide semantic search without sending your code to the cloud.
 
 **Use lgrep when you need to:**
 - Search for code by meaning, not just keywords
 - Understand how a codebase works
 - Build context for implementing a feature
 - Find where specific functionality is implemented
+- Find dead code (functions with zero callers)
+- Detect circular import dependencies
+- Find unused exports
+- Analyze the impact of refactoring changes
+- Preview rename operations
 - Locate relevant files for a task
-- Understand dependencies and call graphs
 
 ## Quick Start
 
@@ -118,6 +122,60 @@ lgrep analyze /path/to/project --symbols --deps --calls
 - `--calls` - Show call graph
 - `--tree` - Output full AST tree
 - `--file path` - Analyze single file only
+
+### Natural Language Intent
+
+Use natural language to run the right command automatically:
+```bash
+lgrep intent "what calls awardBadge"        # → runs callers
+lgrep intent "what happens if I change X"   # → runs impact
+lgrep intent "find dead code in contracts/" # → runs dead
+lgrep intent "show circular dependencies"   # → runs cycles
+```
+
+### Code Health Commands
+
+**Find dead code** (functions with zero callers):
+```bash
+lgrep dead --index myproject
+```
+
+**Find unused exports** (exports never imported):
+```bash
+lgrep unused-exports --index myproject
+```
+
+**Detect circular dependencies**:
+```bash
+lgrep cycles --index myproject
+```
+
+**Find similar/duplicate code**:
+```bash
+lgrep similar --index myproject
+```
+
+### Refactoring Commands
+
+**Analyze change impact** (blast radius):
+```bash
+lgrep impact myFunction --index myproject
+```
+
+**Find all callers of a function**:
+```bash
+lgrep callers myFunction --index myproject
+```
+
+**Preview rename operation**:
+```bash
+lgrep rename oldName newName --preview --index myproject
+```
+
+**Check for breaking signature changes**:
+```bash
+lgrep breaking --index myproject
+```
 
 ## Workflows
 

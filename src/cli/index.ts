@@ -971,11 +971,13 @@ program
   .description('Install lgrep integration with Claude Code')
   .option('--skip-skill', 'Do not create the skill')
   .option('--skip-hook', 'Do not add SessionStart hook')
-  .option('--add-to-project', 'Add lgrep instructions to project CLAUDE.md')
+  .option('--skip-claude-md', 'Do not update ~/.claude/CLAUDE.md')
+  .option('--add-to-project', 'Also add lgrep instructions to project CLAUDE.md')
   .option('-j, --json', 'Output as JSON')
   .action(async (options: {
     skipSkill?: boolean;
     skipHook?: boolean;
+    skipClaudeMd?: boolean;
     addToProject?: boolean;
     json?: boolean;
   }) => {
@@ -983,6 +985,7 @@ program
       const result = await runInstallCommand({
         skipSkill: options.skipSkill,
         skipHook: options.skipHook,
+        skipClaudeMd: options.skipClaudeMd,
         addToProject: options.addToProject,
         json: options.json,
       });
@@ -1016,6 +1019,14 @@ program
         }
       }
 
+      if (!options.skipClaudeMd) {
+        if (result.userClaudeMdUpdated) {
+          console.log(`  ✓ CLAUDE.md updated at ${result.userClaudeMdPath}`);
+        } else if (result.userClaudeMdAlreadyHasLgrep) {
+          console.log(`  ○ CLAUDE.md already has lgrep section at ${result.userClaudeMdPath}`);
+        }
+      }
+
       if (options.addToProject) {
         if (result.projectClaudeUpdated) {
           console.log(`  ✓ Project CLAUDE.md updated at ${result.projectClaudePath}`);
@@ -1025,7 +1036,7 @@ program
       }
 
       console.log('\nlgrep is now integrated with Claude Code!');
-      console.log('The SessionStart hook will automatically start watchers for your projects.');
+      console.log('Claude will now know to use lgrep for code search and analysis.');
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));

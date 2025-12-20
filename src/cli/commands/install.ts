@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 export interface InstallOptions {
   skipSkill?: boolean;
   skipHook?: boolean;
+  skipClaudeMd?: boolean;
   addToProject?: boolean;
   json?: boolean;
 }
@@ -28,6 +29,9 @@ export interface InstallResult {
   hookAdded: boolean;
   hookAlreadyExists?: boolean;
   settingsPath?: string;
+  userClaudeMdUpdated: boolean;
+  userClaudeMdAlreadyHasLgrep?: boolean;
+  userClaudeMdPath?: string;
   projectClaudeUpdated: boolean;
   projectClaudeAlreadyHasLgrep?: boolean;
   projectClaudePath?: string;
@@ -174,6 +178,40 @@ async function addSessionStartHook(homedir: string): Promise<{ added: boolean; a
 }
 
 /**
+ * Add lgrep section to the user's global ~/.claude/CLAUDE.md.
+ */
+async function updateUserClaudeMd(homedir: string): Promise<{ updated: boolean; alreadyHasLgrep: boolean; path: string }> {
+  const claudeDir = path.join(homedir, '.claude');
+  const claudeMdPath = path.join(claudeDir, 'CLAUDE.md');
+
+  // Ensure .claude directory exists
+  await fs.mkdir(claudeDir, { recursive: true });
+
+  // Check if CLAUDE.md exists
+  if (!(await fileExists(claudeMdPath))) {
+    // Create new CLAUDE.md with lgrep section
+    const section = await loadTemplate('claude-md-section.md');
+    await fs.writeFile(claudeMdPath, `# User Configuration\n\n${section}\n`);
+    return { updated: true, alreadyHasLgrep: false, path: claudeMdPath };
+  }
+
+  // Read existing content
+  const content = await fs.readFile(claudeMdPath, 'utf-8');
+
+  // Check if lgrep section already exists
+  if (content.includes('## lgrep') || content.includes('# lgrep')) {
+    return { updated: false, alreadyHasLgrep: true, path: claudeMdPath };
+  }
+
+  // Append lgrep section
+  const section = await loadTemplate('claude-md-section.md');
+  const newContent = `${content}\n\n${section}\n`;
+  await fs.writeFile(claudeMdPath, newContent);
+
+  return { updated: true, alreadyHasLgrep: false, path: claudeMdPath };
+}
+
+/**
  * Add lgrep section to project CLAUDE.md.
  */
 async function updateProjectClaudeMd(): Promise<{ updated: boolean; alreadyHasLgrep: boolean; path: string }> {
@@ -210,12 +248,13 @@ async function updateProjectClaudeMd(): Promise<{ updated: boolean; alreadyHasLg
 export async function runInstallCommand(
   options: InstallOptions = {}
 ): Promise<InstallResult> {
-  const { skipSkill = false, skipHook = false, addToProject = false } = options;
+  const { skipSkill = false, skipHook = false, skipClaudeMd = false, addToProject = false } = options;
 
   const result: InstallResult = {
     success: false,
     skillCreated: false,
     hookAdded: false,
+    userClaudeMdUpdated: false,
     projectClaudeUpdated: false,
   };
 
@@ -238,7 +277,15 @@ export async function runInstallCommand(
       result.settingsPath = hookResult.path;
     }
 
-    // Update project CLAUDE.md
+    // Update user's global ~/.claude/CLAUDE.md (default behavior)
+    if (!skipClaudeMd) {
+      const userClaudeMdResult = await updateUserClaudeMd(homedir);
+      result.userClaudeMdUpdated = userClaudeMdResult.updated;
+      result.userClaudeMdAlreadyHasLgrep = userClaudeMdResult.alreadyHasLgrep;
+      result.userClaudeMdPath = userClaudeMdResult.path;
+    }
+
+    // Update project CLAUDE.md (opt-in)
     if (addToProject) {
       const claudeMdResult = await updateProjectClaudeMd();
       result.projectClaudeUpdated = claudeMdResult.updated;
