@@ -1,4 +1,5 @@
-import { resolve } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { openDatabase, listIndexes } from '../../storage/lance.js';
 import { getDbPath } from './paths.js';
 
@@ -28,6 +29,16 @@ function isInsidePath(directory: string, rootPath: string): boolean {
   return normalizedDir.startsWith(normalizedRoot + '/');
 }
 
+interface LgrepConfig {
+  index?: string;
+  root?: string;
+}
+
+interface LgrepConfigMatch {
+  config: LgrepConfig;
+  configDir: string;
+}
+
 /**
  * Auto-detect which index applies to a given directory.
  *
@@ -52,6 +63,29 @@ export async function detectIndexForDirectory(
 
     if (indexes.length === 0) {
       return null;
+    }
+
+    const configMatch = findLgrepConfig(targetDir);
+    if (configMatch) {
+      const { config, configDir } = configMatch;
+      if (config.index) {
+        const matched = indexes.find(index => index.name === config.index && index.metadata.status !== 'failed');
+        if (matched) {
+          return matched.name;
+        }
+      }
+
+      if (config.root) {
+        const explicitRoot = resolve(configDir, config.root);
+        const explicit = indexes.find(
+          index =>
+            normalizePath(index.metadata.rootPath) === normalizePath(explicitRoot) &&
+            index.metadata.status !== 'failed'
+        );
+        if (explicit) {
+          return explicit.name;
+        }
+      }
     }
 
     // Find all matching indexes (where target is inside rootPath)
@@ -86,4 +120,29 @@ export async function detectIndexForDirectory(
   } finally {
     await db.close();
   }
+}
+
+function findLgrepConfig(directory: string): LgrepConfigMatch | null {
+  let current = resolve(directory);
+
+  while (true) {
+    const candidate = join(current, '.lgrep.json');
+    if (existsSync(candidate)) {
+      try {
+        const content = readFileSync(candidate, 'utf-8');
+        const parsed = JSON.parse(content) as LgrepConfig;
+        return { config: parsed, configDir: current };
+      } catch {
+        return null;
+      }
+    }
+
+    const parent = dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+
+  return null;
 }

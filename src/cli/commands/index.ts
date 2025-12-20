@@ -1,4 +1,4 @@
-import { basename, resolve, extname } from 'node:path';
+import { basename, resolve, extname, dirname, join } from 'node:path';
 import { access, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { walkFiles, type WalkResult } from '../../core/walker.js';
@@ -40,6 +40,7 @@ import {
 } from '../../storage/code-intel.js';
 import type { CodeSymbol, CodeDependency, CallEdge } from '../../types/code-intel.js';
 import { createSummarizerClient } from '../../core/summarizer.js';
+import { existsSync } from 'node:fs';
 
 /**
  * Options for the index command.
@@ -293,7 +294,12 @@ export async function runIndexCommand(
               file.relativePath,
               file.extension
             );
-            const symbols = convertSymbols(rawSymbols, file.absolutePath, file.relativePath);
+            const symbols = convertSymbols(
+              rawSymbols,
+              file.absolutePath,
+              file.relativePath,
+              content
+            );
             await addSymbols(db, indexName, symbols);
             totalSymbols += symbols.length;
 
@@ -465,36 +471,83 @@ function convertSymbols(
     modifiers: string[];
   }>,
   filePath: string,
-  relativePath: string
+  relativePath: string,
+  content: string
 ): CodeSymbol[] {
-  return rawSymbols.map(sym => ({
-    id: sym.id,
-    name: sym.name,
-    kind: sym.kind as CodeSymbol['kind'],
-    filePath,
-    relativePath,
-    range: {
-      start: {
-        line: sym.lineStart,
-        column: sym.columnStart,
+  return rawSymbols.map(sym => {
+    const baseSymbol: CodeSymbol = {
+      id: sym.id,
+      name: sym.name,
+      kind: sym.kind as CodeSymbol['kind'],
+      filePath,
+      relativePath,
+      range: {
+        start: {
+          line: sym.lineStart,
+          column: sym.columnStart,
+        },
+        end: {
+          line: sym.lineEnd,
+          column: sym.columnEnd,
+        },
       },
-      end: {
-        line: sym.lineEnd,
-        column: sym.columnEnd,
-      },
-    },
-    isExported: sym.isExported,
-    isDefaultExport: sym.isDefaultExport,
-    signature: sym.signature,
-    documentation: sym.documentation,
-    parentId: sym.parentId,
-    modifiers: sym.modifiers,
-  }));
+      isExported: sym.isExported,
+      isDefaultExport: sym.isDefaultExport,
+      signature: sym.signature,
+      documentation: sym.documentation,
+      parentId: sym.parentId,
+      modifiers: sym.modifiers,
+    };
+
+    const code = getSymbolCode(content, baseSymbol);
+    const bodyHash = hashContent(code);
+
+    return {
+      ...baseSymbol,
+      bodyHash,
+    };
+  });
 }
 
 /**
  * Convert dependency extractor output to storage format
  */
+const MODULE_EXTENSIONS = ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'];
+const INDEX_FILE_NAMES = ['index.ts', 'index.tsx', 'index.js', 'index.mjs', 'index.cjs'];
+
+function resolveModulePath(sourceFile: string, targetModule?: string): string | undefined {
+  if (!targetModule) {
+    return undefined;
+  }
+
+  if (!targetModule.startsWith('.') && !targetModule.startsWith('/')) {
+    return undefined;
+  }
+
+  const importerDir = dirname(sourceFile);
+  const basePath = resolve(importerDir, targetModule);
+
+  const candidates = new Set<string>();
+  candidates.add(basePath);
+  for (const ext of MODULE_EXTENSIONS) {
+    candidates.add(basePath + ext);
+  }
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+    for (const indexFile of INDEX_FILE_NAMES) {
+      const indexCandidate = join(candidate, indexFile);
+      if (existsSync(indexCandidate)) {
+        return indexCandidate;
+      }
+    }
+  }
+
+  return undefined;
+}
+
 function convertDependencies(
   rawDeps: Array<{
     type: string;
@@ -562,11 +615,13 @@ function convertDependencies(
       }
     }
 
+    const resolvedPath = resolveModulePath(sourceFile, dep.source);
+
     return {
       id,
       sourceFile,
       targetModule: dep.source || '',
-      resolvedPath: undefined,
+      resolvedPath,
       kind,
       names,
       line: dep.line || 0,

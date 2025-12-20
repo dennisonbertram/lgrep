@@ -52,6 +52,7 @@ export interface CodeSymbol {
   summary?: string;
   summaryModel?: string;
   summaryGeneratedAt?: string;
+  bodyHash?: string;
 }
 
 /**

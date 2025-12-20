@@ -11,6 +11,13 @@ import { runStopCommand } from './commands/stop.js';
 import { runSetupCommand } from './commands/setup.js';
 import { runInstallCommand } from './commands/install.js';
 import { runCallersCommand } from './commands/callers.js';
+import { runDeadCommand } from './commands/dead.js';
+import { runSimilarCommand } from './commands/similar.js';
+import { runCyclesCommand } from './commands/cycles.js';
+import { runUnusedExportsCommand } from './commands/unused-exports.js';
+import { runBreakingCommand } from './commands/breaking.js';
+import { runRenameCommand } from './commands/rename.js';
+import { runIntentCommand, presentIntentResult } from './commands/intent.js';
 import { runDepsCommand } from './commands/deps.js';
 import { runImpactCommand } from './commands/impact.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
@@ -686,6 +693,268 @@ program
       }
 
       console.log(`\nTotal: ${result.totalFiles} file${result.totalFiles === 1 ? '' : 's'} potentially affected`);
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Dead command - find symbols without callers
+program
+  .command('dead')
+  .description('List functions/methods with zero callers')
+  .option('-i, --index <name>', 'Index to inspect (auto-detected otherwise)')
+  .option('-l, --limit <number>', 'Maximum symbols to show')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { index?: string; limit?: string; json?: boolean }) => {
+    try {
+      const result = await runDeadCommand({
+        index: options.index,
+        json: options.json,
+        limit: options.limit ? parseInt(options.limit, 10) : undefined,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('dead', result));
+        return;
+      }
+
+      if (result.deadSymbols.length === 0) {
+        console.log('No dead symbols found.');
+        return;
+      }
+
+      console.log('Dead symbols (no callers):');
+      for (const sym of result.deadSymbols) {
+        console.log(`  ${sym.relativePath} - ${sym.name} (${sym.kind})`);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Similar command - duplicate/snippet detection
+program
+  .command('similar')
+  .description('Find groups of symbols with similar code')
+  .option('-i, --index <name>', 'Index to inspect (auto-detected otherwise)')
+  .option('-l, --limit <number>', 'Maximum groups to show')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { index?: string; limit?: string; json?: boolean }) => {
+    try {
+      const result = await runSimilarCommand({
+        index: options.index,
+        json: options.json,
+        limit: options.limit ? parseInt(options.limit, 10) : undefined,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('similar', result));
+        return;
+      }
+
+      if (result.groups.length === 0) {
+        console.log('No similar symbol groups detected.');
+        return;
+      }
+
+      console.log('Similar code groups:');
+      for (const group of result.groups) {
+        console.log(`\nGroup (${group.symbols.length} matches):`);
+        for (const sym of group.symbols) {
+          console.log(`  ${sym.relativePath} - ${sym.name} (${sym.kind})`);
+        }
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Cycles command - detect dependency cycles
+program
+  .command('cycles')
+  .description('Detect circular import/dependency chains')
+  .option('-i, --index <name>', 'Index to inspect (auto-detected otherwise)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { index?: string; json?: boolean }) => {
+    try {
+      const result = await runCyclesCommand({
+        index: options.index,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('cycles', result));
+        return;
+      }
+
+      if (result.cycles.length === 0) {
+        console.log('No cycles detected in dependencies.');
+        return;
+      }
+
+      console.log('Detected dependency cycles:');
+      for (const cycle of result.cycles) {
+        console.log('  ' + cycle.join(' -> '));
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Unused exports command
+program
+  .command('unused-exports')
+  .description('List exports that are never imported')
+  .option('-i, --index <name>', 'Index to inspect (auto-detected otherwise)')
+  .option('-l, --limit <number>', 'Maximum symbols to show')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { index?: string; limit?: string; json?: boolean }) => {
+    try {
+      const result = await runUnusedExportsCommand({
+        index: options.index,
+        json: options.json,
+        limit: options.limit ? parseInt(options.limit, 10) : undefined,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('unused-exports', result));
+        return;
+      }
+
+      if (result.unused.length === 0) {
+        console.log('No unused exports found.');
+        return;
+      }
+
+      console.log('Unused exports:');
+      for (const exp of result.unused) {
+        console.log(`  ${exp.relativePath} - ${exp.name} (${exp.kind})`);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Breaking command - detect signature mismatches
+program
+  .command('breaking')
+  .description('Check for calls that may break when signature changes')
+  .option('-i, --index <name>', 'Index to inspect (auto-detected otherwise)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { index?: string; json?: boolean }) => {
+    try {
+      const result = await runBreakingCommand({
+        index: options.index,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('breaking', result));
+        return;
+      }
+
+      if (result.mismatches.length === 0) {
+        console.log('No signature mismatches detected.');
+        return;
+      }
+
+      console.log('Potential breaking signature mismatches:');
+      for (const mismatch of result.mismatches) {
+        console.log(`\n${mismatch.relativePath} - ${mismatch.name} (${mismatch.signature})`);
+        for (const call of mismatch.calls) {
+          console.log(`  ${call.file}:${call.line} - args: ${call.argumentCount} vs expected ${call.expected}`);
+        }
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Rename command - preview references
+program
+  .command('rename <oldName> <newName>')
+  .description('Preview the impact of renaming a symbol')
+  .option('-i, --index <name>', 'Index to inspect (auto-detected otherwise)')
+  .option('-l, --limit <number>', 'Max preview references to show')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (oldName: string, newName: string, options: { index?: string; limit?: string; json?: boolean }) => {
+    try {
+      const result = await runRenameCommand(oldName, newName, {
+        index: options.index,
+        json: options.json,
+        preview: true,
+        limit: options.limit ? parseInt(options.limit, 10) : undefined,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('rename', result));
+        return;
+      }
+
+      console.log(`Rename "${result.symbolName}" → "${result.newName}" (${result.totalReferences} reference${result.totalReferences === 1 ? '' : 's'})`);
+      if (result.references.length === 0) {
+        return;
+      }
+
+      for (const ref of result.references) {
+        console.log(`  ${ref.file}:${ref.line}${ref.callerName ? ` in ${ref.callerName}` : ''}`);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Intent command - natural-language router
+program
+  .command('intent <prompt>')
+  .description('Interpret NL intent and run the appropriate lgrep command')
+  .option('-i, --index <name>', 'Index to inspect (auto-detected otherwise)')
+  .option('-l, --limit <number>', 'Limit for commands that support it')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (prompt: string, options: { index?: string; limit?: string; json?: boolean }) => {
+    try {
+      const result = await runIntentCommand(prompt, {
+        index: options.index,
+        limit: options.limit ? parseInt(options.limit, 10) : undefined,
+        json: options.json,
+      });
+
+      presentIntentResult(result, options.json);
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));

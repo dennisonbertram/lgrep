@@ -15,6 +15,8 @@ npm install -g lgrep
 - **Privacy-First** - Run completely locally with Ollama
 - **Fast** - LanceDB vector storage, incremental indexing
 - **Watch Mode** - Auto-update indexes on file changes
+- **Natural Language Intent** - `lgrep intent "<prompt>"` routes casual queries to the right code-intel command
+- **High-Impact Code Intelligence** - Built-in `dead`, `similar`, `cycles`, `unused-exports`, `breaking`, and `rename` helpers
 
 ## Quick Start
 
@@ -96,6 +98,34 @@ lgrep search --type function "auth"  # Filter by symbol type
 lgrep search "api" --limit 20        # Adjust result count
 ```
 
+### `lgrep intent <prompt>`
+
+Let the CLI interpret your question and run the most appropriate helper. Examples:
+
+```bash
+lgrep intent "what calls awardBadge"
+lgrep intent "what happens if I change setScore"
+lgrep intent "find dead code"
+```
+
+You can still pass `--index <name>` or `--limit <n>` when multiple indexes exist.
+
+### High-impact code intelligence commands
+
+The following commands run against the same auto-detected index and re-use the code-intel tables that the main indexer already populates:
+
+| Command | Purpose |
+|---|---|
+| `lgrep dead` | Find functions/methods with zero callers |
+| `lgrep similar` | Show duplicated function bodies via a lightweight fingerprint |
+| `lgrep cycles` | Detect circular dependency chains through resolved imports |
+| `lgrep unused-exports` | Flag exported symbols that are never imported |
+| `lgrep breaking` | Surface calls whose argument count no longer matches the signature |
+| `lgrep rename <old> <new>` | Preview every reference that would change if you rename a symbol |
+
+Each command supports `-i, --index`, `-l, --limit`, and `-j, --json` (when applicable) so you can script them like the existing CLI commands.
+
+
 ### `lgrep context <task>`
 
 Build context package for a coding task. The index is auto-detected from your current directory, or you can specify it explicitly with `--index`.
@@ -160,6 +190,15 @@ lgrep supports multiple AI providers for summarization and context suggestions:
 | **OpenAI** | ~2s | Excellent | Cloud |
 
 ### Auto-Detection
+
+Create a `.lgrep.json` file in your repo root to declare the default index and root path. lgrep reads this file (before scanning the list of indexes) so you can stay in one folder without passing `--index` repeatedly.
+
+```json
+{
+  "index": "frontend-ui",
+  "root": "src"
+}
+```
 
 lgrep automatically selects the best available provider based on environment variables:
 

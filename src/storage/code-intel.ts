@@ -31,6 +31,7 @@ export async function addSymbols(
     summary: symbol.summary ?? '',
     summary_model: symbol.summaryModel ?? '',
     summary_generated_at: symbol.summaryGeneratedAt ?? '',
+    body_hash: symbol.bodyHash ?? '',
     index_name: indexName,
     created_at: new Date().toISOString(),
   }));
@@ -91,6 +92,7 @@ export async function getSymbols(
       summary: record['summary'] as string || undefined,
       summaryModel: record['summary_model'] as string || undefined,
       summaryGeneratedAt: record['summary_generated_at'] as string || undefined,
+      bodyHash: record['body_hash'] as string || undefined,
     }));
   } catch {
     return [];
@@ -142,6 +144,7 @@ export async function searchSymbols(
       summary: record['summary'] as string || undefined,
       summaryModel: record['summary_model'] as string || undefined,
       summaryGeneratedAt: record['summary_generated_at'] as string || undefined,
+      bodyHash: record['body_hash'] as string || undefined,
     }));
   } catch {
     return [];
@@ -535,6 +538,7 @@ export async function getSymbolsWithoutSummaries(
       summary: record['summary'] as string || undefined,
       summaryModel: record['summary_model'] as string || undefined,
       summaryGeneratedAt: record['summary_generated_at'] as string || undefined,
+      bodyHash: record['body_hash'] as string || undefined,
     }));
   } catch {
     return [];
