@@ -171,6 +171,48 @@ Output includes:
 - ✓ Watcher daemon status
 - ✓ Claude integration status
 
+### `lgrep stats`
+
+Show index statistics.
+
+```bash
+lgrep stats              # Stats for current directory's index
+lgrep stats --all        # Stats for all indexes
+lgrep stats -i myproject # Stats for specific index
+```
+
+### `lgrep logs`
+
+View watcher daemon logs.
+
+```bash
+lgrep logs               # Last 50 lines for current index
+lgrep logs -n 100        # Last 100 lines
+lgrep logs -f            # Follow logs in real-time (like tail -f)
+lgrep logs --all         # Logs for all watchers
+```
+
+### `lgrep symbols [query]`
+
+Quick symbol lookup by name.
+
+```bash
+lgrep symbols              # List all symbols
+lgrep symbols User         # Find symbols matching "User"
+lgrep symbols -k function  # Only functions
+lgrep symbols -f auth.ts   # Only from files matching "auth.ts"
+```
+
+### `lgrep explain <target>`
+
+AI-powered explanation of a file or symbol.
+
+```bash
+lgrep explain src/auth.ts        # Explain a file
+lgrep explain authenticateUser   # Explain a symbol
+lgrep explain validateToken -m groq:llama-3.3-70b  # Use specific model
+```
+
 ### `lgrep watch <index-name>`
 
 Watch for file changes and update index automatically.
