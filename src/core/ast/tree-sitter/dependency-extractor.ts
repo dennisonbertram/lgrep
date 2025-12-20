@@ -199,6 +199,8 @@ export async function extractDependenciesTreeSitter(
 
     return dependencies;
   } catch (error) {
+    // Log error but don't fail analysis
+    console.warn(`Failed to extract dependencies from ${filePath}:`, error instanceof Error ? error.message : String(error));
     return [];
   }
 }

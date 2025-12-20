@@ -6,9 +6,14 @@ import { readFile, stat } from 'node:fs/promises';
 import { relative, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { walkFiles } from '../walker.js';
-import { extractSymbols } from './symbol-extractor.js';
-import { extractDependencies } from './dependency-extractor.js';
-import { extractCalls } from './call-extractor.js';
+import { getParserType } from './languages.js';
+import { extractSymbolsBabel, extractSoliditySymbols } from './symbol-extractor.js';
+import { extractDependenciesBabel, extractSolidityDependencies } from './dependency-extractor.js';
+import { extractCallsBabel, extractSolidityCalls, type FunctionCall } from './call-extractor.js';
+import { extractSymbolsTreeSitter } from './tree-sitter/symbol-extractor.js';
+import { extractCallsTreeSitter } from './tree-sitter/call-extractor.js';
+import { extractDependenciesTreeSitter } from './tree-sitter/dependency-extractor.js';
+import { ALL_CODE_EXTENSIONS } from './languages.js';
 import type {
   CodeSymbol,
   CodeDependency,
@@ -32,6 +37,8 @@ export interface AnalyzeOptions {
   file?: string;
   /** Output as JSON */
   json?: boolean;
+  /** Number of files to process in parallel (default: 10) */
+  concurrency?: number;
 }
 
 /**
@@ -242,17 +249,41 @@ export async function analyzeFile(
     };
   }
 
-  // Extract symbols
-  const symbols = await extractSymbols(code, filePath, relativePath, extension);
+  // Dispatch to appropriate extractors based on parser type
+  const parserType = getParserType(extension);
+  let symbols: CodeSymbol[] = [];
+  let rawDeps: unknown[] = [];
+  let rawCalls: FunctionCall[] = [];
 
-  // Extract dependencies
-  const rawDeps = await extractDependencies(code, filePath);
+  switch (parserType) {
+    case 'tree-sitter':
+      symbols = await extractSymbolsTreeSitter(code, filePath, relativePath, extension);
+      rawCalls = await extractCallsTreeSitter(code, filePath, extension);
+      rawDeps = await extractDependenciesTreeSitter(code, filePath, extension);
+      break;
+
+    case 'solidity':
+      symbols = extractSoliditySymbols(code, filePath, relativePath);
+      rawCalls = extractSolidityCalls(code, filePath);
+      rawDeps = extractSolidityDependencies(code, filePath);
+      break;
+
+    case 'babel':
+      symbols = await extractSymbolsBabel(code, filePath, relativePath, extension);
+      rawCalls = await extractCallsBabel(code, filePath);
+      rawDeps = await extractDependenciesBabel(code, filePath);
+      break;
+
+    case null:
+      // Unsupported extension - return empty results
+      break;
+  }
+
+  // Convert dependencies and calls to standard format
   const dependencies = rawDeps.map(dep =>
     convertDependency(dep, filePath, 1)
   );
 
-  // Extract calls
-  const rawCalls = await extractCalls(code, filePath);
   const calls = rawCalls.map(call =>
     convertCall(call, filePath, relativePath)
   );
@@ -292,17 +323,16 @@ export async function analyzeProject(
     if (stats.isFile()) {
       // Single file
       filesToAnalyze = [rootPath];
-    } else if (stats.isDirectory()) {
+      } else if (stats.isDirectory()) {
       // Directory - walk files
       if (options.file) {
         // Specific file within directory
         filesToAnalyze = [options.file];
       } else {
         // All code files in directory (JS/TS, Solidity, and tree-sitter supported languages)
-        const CODE_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.sol', '.go', '.rs', '.py', '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.java'];
         const walkResults = await walkFiles(rootPath);
         filesToAnalyze = walkResults
-          .filter(r => CODE_EXTENSIONS.includes(r.extension))
+          .filter(r => ALL_CODE_EXTENSIONS.includes(r.extension))
           .map(r => r.absolutePath);
       }
     }
@@ -323,11 +353,29 @@ export async function analyzeProject(
     };
   }
 
-  // Analyze each file
-  for (const file of filesToAnalyze) {
-    try {
-      const analysis = await analyzeFile(file, rootPath);
+  // Process files in parallel batches
+  const concurrency = options.concurrency ?? 10;
 
+  for (let i = 0; i < filesToAnalyze.length; i += concurrency) {
+    const batch = filesToAnalyze.slice(i, i + concurrency);
+    const batchResults = await Promise.all(
+      batch.map(file =>
+        analyzeFile(file, rootPath).catch(err => ({
+          filePath: file,
+          relativePath: relative(rootPath, file),
+          extension: extname(file),
+          contentHash: '',
+          symbols: [],
+          dependencies: [],
+          calls: [],
+          errors: [err instanceof Error ? err.message : String(err)],
+          analyzedAt: new Date().toISOString(),
+        }))
+      )
+    );
+
+    // Aggregate batch results
+    for (const analysis of batchResults) {
       // Collect symbols
       for (const symbol of analysis.symbols) {
         allSymbols.push(symbol);
@@ -342,10 +390,6 @@ export async function analyzeProject(
 
       // Collect errors
       errors.push(...analysis.errors);
-    } catch (error) {
-      errors.push(
-        `Failed to analyze ${file}: ${error instanceof Error ? error.message : String(error)}`
-      );
     }
   }
 
@@ -373,6 +417,10 @@ export async function analyzeProject(
   if (options.calls) {
     result.calls = allCalls;
   }
+
+  // Clear tree cache after analysis to free memory
+  const { clearTreeCache } = await import('./tree-sitter/parser.js');
+  clearTreeCache();
 
   return result;
 }

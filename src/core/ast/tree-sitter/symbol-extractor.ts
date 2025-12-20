@@ -252,6 +252,8 @@ export async function extractSymbolsTreeSitter(
 
     return symbols;
   } catch (error) {
+    // Log error but don't fail analysis
+    console.warn(`Failed to extract symbols from ${filePath}:`, error instanceof Error ? error.message : String(error));
     return [];
   }
 }

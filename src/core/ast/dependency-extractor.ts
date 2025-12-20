@@ -87,24 +87,14 @@ function isExternalModule(source: string): boolean {
 }
 
 /**
- * Extract all import/export dependencies from source code
+ * Extract dependencies from JavaScript/TypeScript code using Babel
  */
-export async function extractDependencies(code: string, filePath: string): Promise<Dependency[]> {
+export async function extractDependenciesBabel(code: string, filePath: string): Promise<Dependency[]> {
   if (!code.trim()) {
     return [];
   }
 
-  // Dispatch to Solidity extraction for .sol files
   const extension = filePath.split('.').pop() || '';
-  if (extension === 'sol') {
-    return extractSolidityDependencies(code, filePath);
-  }
-
-  // Dispatch to tree-sitter for supported languages
-  if (isSupportedByTreeSitter(`.${extension}`)) {
-    return extractDependenciesTreeSitter(code, filePath, `.${extension}`);
-  }
-
   const dependencies: Dependency[] = [];
 
   // Determine parser plugins based on file extension
@@ -287,9 +277,33 @@ export async function extractDependencies(code: string, filePath: string): Promi
 }
 
 /**
+ * Extract all import/export dependencies from source code (dispatcher - kept for backwards compatibility)
+ * @deprecated Use specific extractors directly based on parser type
+ */
+export async function extractDependencies(code: string, filePath: string): Promise<Dependency[]> {
+  if (!code.trim()) {
+    return [];
+  }
+
+  // Dispatch to Solidity extraction for .sol files
+  const extension = filePath.split('.').pop() || '';
+  if (extension === 'sol') {
+    return extractSolidityDependencies(code, filePath);
+  }
+
+  // Dispatch to tree-sitter for supported languages
+  if (isSupportedByTreeSitter(`.${extension}`)) {
+    return extractDependenciesTreeSitter(code, filePath, `.${extension}`);
+  }
+
+  // Default to Babel for JS/TS
+  return extractDependenciesBabel(code, filePath);
+}
+
+/**
  * Extract dependencies from Solidity source code
  */
-function extractSolidityDependencies(code: string, filePath: string): Dependency[] {
+export function extractSolidityDependencies(code: string, filePath: string): Dependency[] {
   try {
     const ast = parseSolidity(code, { loc: true, range: true, tolerant: true });
 

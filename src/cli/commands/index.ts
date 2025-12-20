@@ -6,6 +6,7 @@ import { chunkText } from '../../core/chunker.js';
 import { createEmbeddingClient } from '../../core/embeddings.js';
 import { hashContent } from '../../core/hash.js';
 import { loadConfig } from '../../storage/config.js';
+import { ALL_CODE_EXTENSIONS } from '../../core/ast/languages.js';
 import {
   openDatabase,
   createIndex,
@@ -283,8 +284,7 @@ export async function runIndexCommand(
         }
 
         // Extract code intelligence for JS/TS/Solidity and tree-sitter supported files
-        const CODE_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.sol', '.go', '.rs', '.py', '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.java'];
-        if (CODE_EXTENSIONS.includes(file.extension)) {
+        if (ALL_CODE_EXTENSIONS.includes(file.extension)) {
           try {
             // Extract symbols
             const rawSymbols = await extractSymbols(

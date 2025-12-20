@@ -15,24 +15,14 @@ import { isSupportedByTreeSitter, extractSymbolsTreeSitter } from './tree-sitter
 const traverse = (traverseDefault as unknown as { default: typeof traverseDefault }).default || traverseDefault;
 
 /**
- * Extract code symbols from source code
+ * Extract symbols from JavaScript/TypeScript code using Babel
  */
-export async function extractSymbols(
+export async function extractSymbolsBabel(
   code: string,
   filePath: string,
   relativePath: string,
   extension: string
 ): Promise<CodeSymbol[]> {
-  // Dispatch to Solidity extraction for .sol files
-  if (extension === '.sol') {
-    return extractSoliditySymbols(code, filePath, relativePath);
-  }
-
-  // Dispatch to tree-sitter for supported languages
-  if (isSupportedByTreeSitter(extension)) {
-    return extractSymbolsTreeSitter(code, filePath, relativePath, extension);
-  }
-
   try {
     // Determine parser plugins based on extension
     const plugins: parser.ParserPlugin[] = ['jsx'];
@@ -402,9 +392,33 @@ export async function extractSymbols(
 }
 
 /**
+ * Extract code symbols from source code (dispatcher - kept for backwards compatibility)
+ * @deprecated Use specific extractors directly based on parser type
+ */
+export async function extractSymbols(
+  code: string,
+  filePath: string,
+  relativePath: string,
+  extension: string
+): Promise<CodeSymbol[]> {
+  // Dispatch to Solidity extraction for .sol files
+  if (extension === '.sol') {
+    return extractSoliditySymbols(code, filePath, relativePath);
+  }
+
+  // Dispatch to tree-sitter for supported languages
+  if (isSupportedByTreeSitter(extension)) {
+    return extractSymbolsTreeSitter(code, filePath, relativePath, extension);
+  }
+
+  // Default to Babel for JS/TS
+  return extractSymbolsBabel(code, filePath, relativePath, extension);
+}
+
+/**
  * Extract symbols from Solidity source code
  */
-function extractSoliditySymbols(
+export function extractSoliditySymbols(
   code: string,
   filePath: string,
   relativePath: string

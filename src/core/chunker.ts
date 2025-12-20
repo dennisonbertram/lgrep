@@ -582,6 +582,8 @@ interface CodeBoundary {
   className?: string;
 }
 
+import { ALL_CODE_EXTENSIONS } from './ast/languages.js';
+
 /**
  * Chunk code files using AST parsing for better boundaries.
  * Falls back to regular text chunking on parse errors.
@@ -599,8 +601,7 @@ export function chunkCode(
   }
 
   // Check if extension is supported
-  const supportedExtensions = ['.js', '.jsx', '.ts', '.tsx', '.sol', '.go', '.rs', '.py', '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.java'];
-  if (!supportedExtensions.includes(extension)) {
+  if (!ALL_CODE_EXTENSIONS.includes(extension)) {
     // Fallback to text chunking
     const chunks = chunkText(code, options);
     return chunks.map(chunk => ({

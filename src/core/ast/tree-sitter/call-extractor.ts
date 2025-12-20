@@ -227,11 +227,19 @@ export async function extractCallsTreeSitter(
       const caller = findEnclosingFunction(node, language);
       const callType = getCallType(node, language);
 
+      // Count arguments
+      let argumentCount = 0;
+      const argumentsNode = node.childForFieldName('arguments');
+      if (argumentsNode) {
+        // Count comma-separated arguments
+        argumentCount = argumentsNode.childCount > 0 ? argumentsNode.childCount : 0;
+      }
+
       calls.push({
         callee,
         caller: caller ?? null,
         type: callType,
-        argumentCount: 0, // Would require more complex parsing to count arguments
+        argumentCount,
         line: node.startPosition.row + 1,
         column: node.startPosition.column,
       });
@@ -239,6 +247,8 @@ export async function extractCallsTreeSitter(
 
     return calls;
   } catch (error) {
+    // Log error but don't fail analysis
+    console.warn(`Failed to extract calls from ${filePath}:`, error instanceof Error ? error.message : String(error));
     return [];
   }
 }

@@ -80,24 +80,14 @@ function buildCallerContext(scopeStack: string[]): string | null {
 }
 
 /**
- * Extract all function calls from source code
+ * Extract function calls from JavaScript/TypeScript code using Babel
  */
-export async function extractCalls(code: string, filePath: string): Promise<FunctionCall[]> {
+export async function extractCallsBabel(code: string, filePath: string): Promise<FunctionCall[]> {
   if (!code.trim()) {
     return [];
   }
 
-  // Dispatch to Solidity extraction for .sol files
   const extension = filePath.split('.').pop() || '';
-  if (extension === 'sol') {
-    return extractSolidityCalls(code, filePath);
-  }
-
-  // Dispatch to tree-sitter for supported languages
-  if (isSupportedByTreeSitter(`.${extension}`)) {
-    return extractCallsTreeSitter(code, filePath, `.${extension}`);
-  }
-
   const calls: FunctionCall[] = [];
   const scopeStack: string[] = [];
 
@@ -263,6 +253,30 @@ export async function extractCalls(code: string, filePath: string): Promise<Func
 }
 
 /**
+ * Extract all function calls from source code (dispatcher - kept for backwards compatibility)
+ * @deprecated Use specific extractors directly based on parser type
+ */
+export async function extractCalls(code: string, filePath: string): Promise<FunctionCall[]> {
+  if (!code.trim()) {
+    return [];
+  }
+
+  // Dispatch to Solidity extraction for .sol files
+  const extension = filePath.split('.').pop() || '';
+  if (extension === 'sol') {
+    return extractSolidityCalls(code, filePath);
+  }
+
+  // Dispatch to tree-sitter for supported languages
+  if (isSupportedByTreeSitter(`.${extension}`)) {
+    return extractCallsTreeSitter(code, filePath, `.${extension}`);
+  }
+
+  // Default to Babel for JS/TS
+  return extractCallsBabel(code, filePath);
+}
+
+/**
  * Get the parent class name for a method
  */
 function getParentClassName(path: NodePath): string | null {
@@ -289,7 +303,7 @@ function getParentClassName(path: NodePath): string | null {
 /**
  * Extract function calls from Solidity source code
  */
-function extractSolidityCalls(code: string, filePath: string): FunctionCall[] {
+export function extractSolidityCalls(code: string, filePath: string): FunctionCall[] {
   try {
     const ast = parseSolidity(code, { loc: true, range: true, tolerant: true });
 
