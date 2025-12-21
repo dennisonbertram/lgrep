@@ -374,7 +374,8 @@ Configuration is stored in `~/.lgrep/config.json`:
   "summarizationModel": "auto",
   "ollamaHost": "http://localhost:11434",
   "embedBatchSize": 10,
-  "dbBatchSize": 250
+  "dbBatchSize": 250,
+  "parallelFiles": 10
 }
 ```
 
@@ -398,6 +399,8 @@ ANTHROPIC_API_KEY   # Anthropic API key (LLM only)
 
 Optimized for large codebases:
 
+- **Parallel file processing** - 10 files processed concurrently (configurable)
+- **Cross-file embedding batching** - Batches chunks across multiple files
 - **Batched embeddings** - 10 chunks per API call
 - **Batched DB writes** - 250 chunks per flush
 - **Incremental indexing** - Only reprocess changed files

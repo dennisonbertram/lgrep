@@ -60,6 +60,8 @@ export interface LgrepConfig {
   embedBatchSize: number;
   /** Batch size for LanceDB writes */
   dbBatchSize: number;
+  /** Number of files to process in parallel */
+  parallelFiles: number;
 }
 
 /**
@@ -80,6 +82,7 @@ export const DEFAULT_CONFIG: LgrepConfig = {
   contextFileLimit: 15,
   embedBatchSize: 10,
   dbBatchSize: 250,
+  parallelFiles: 10,
 };
 
 /**
