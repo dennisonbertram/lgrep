@@ -231,6 +231,9 @@ export async function runIndexCommand(
       const parallelLimit = config.parallelFiles ?? 10;
       const embedBatchSize = config.embedBatchSize ?? 10;
       const dbBatchSize = config.dbBatchSize ?? 250;
+      
+      // Skip cache for fresh indexes (mode='create') - cache won't have any hits anyway
+      const skipCache = mode === 'create' && !options.retry;
 
       // Process files in batches for parallel execution
       for (let batchStart = 0; batchStart < files.length; batchStart += parallelLimit) {
@@ -312,7 +315,7 @@ export async function runIndexCommand(
         }
 
         // Check cache sequentially per file (to avoid overwhelming SQLite)
-        // Files are processed in parallel, but cache lookups within each file are sequential
+        // Skip cache entirely for fresh indexes (huge speedup - cache is slow)
         const uncachedPerFile = await Promise.all(
           chunkingResults.map(async (result, fileIndex) => {
             const fileUncached: UncachedChunk[] = [];
@@ -322,6 +325,17 @@ export async function runIndexCommand(
             for (let chunkIndex = 0; chunkIndex < result.textChunks.length; chunkIndex++) {
               const textChunk = result.textChunks[chunkIndex];
               if (!textChunk) continue;
+
+              // Skip slow cache lookups for fresh indexes
+              if (skipCache) {
+                fileUncached.push({
+                  chunkContent: textChunk.content,
+                  fileIndex,
+                  chunkIndex,
+                  textChunk,
+                });
+                continue;
+              }
 
               const cached = await getEmbedding(cache, embedClient.model, textChunk.content);
 
