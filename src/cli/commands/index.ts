@@ -115,6 +115,7 @@ export async function runIndexCommand(
     const dbPath = getDbPath();
     const cachePath = getCachePath();
     const db = await openDatabase(dbPath);
+    spinner?.update('Opening embedding cache...');
     const cache = await openEmbeddingCache(cachePath);
 
     // Declare handle outside try block so it's accessible in catch for failure marking
