@@ -311,7 +311,8 @@ export async function runIndexCommand(
           }
         }
 
-        // Check cache for each chunk - collect uncached chunks per file to avoid race conditions
+        // Check cache sequentially per file (to avoid overwhelming SQLite)
+        // Files are processed in parallel, but cache lookups within each file are sequential
         const uncachedPerFile = await Promise.all(
           chunkingResults.map(async (result, fileIndex) => {
             const fileUncached: UncachedChunk[] = [];
