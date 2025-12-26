@@ -226,6 +226,80 @@ export async function runIndexCommand(
         }
       }
 
+      // First pass: count total chunks to embed for progress tracking
+      spinner?.update('Counting chunks...');
+      let totalChunksToEmbed = 0;
+      const fileChunkCounts = new Map<string, number>();
+
+      for (const file of files) {
+        // Read file to compute hash
+        const content = await readFile(file.absolutePath, 'utf-8');
+        const currentHash = hashContent(content);
+        const existingHash = existingHashes.get(file.absolutePath);
+
+        // Check if file has changed
+        if (mode === 'update' && existingHash === currentHash) {
+          continue;
+        }
+
+        // Count chunks for this file
+        const textChunks = chunkText(content, {
+          maxTokens: config.chunkSize,
+          overlapTokens: config.chunkOverlap,
+        });
+
+        fileChunkCounts.set(file.absolutePath, textChunks.length);
+        totalChunksToEmbed += textChunks.length;
+      }
+
+      // Progress tracking state
+      let embeddedChunks = 0;
+      let embeddingStartTime = 0;
+      let tipShown = false;
+      const isUsingOllama = config.model.startsWith('ollama:');
+
+      // Progress callback for processFile
+      const onProgress = (chunksProcessed: number) => {
+        if (!spinner || options.json) return;
+
+        embeddedChunks += chunksProcessed;
+
+        if (embeddingStartTime === 0) {
+          embeddingStartTime = Date.now();
+        }
+
+        const elapsedMs = Date.now() - embeddingStartTime;
+        const elapsedSec = elapsedMs / 1000;
+        const percentage = ((embeddedChunks / totalChunksToEmbed) * 100).toFixed(1);
+
+        // Calculate ETA
+        let etaStr = '';
+        if (embeddedChunks > 0) {
+          const avgTimePerChunk = elapsedMs / embeddedChunks;
+          const remainingChunks = totalChunksToEmbed - embeddedChunks;
+          const etaMs = avgTimePerChunk * remainingChunks;
+
+          if (etaMs > 60000) {
+            const minutes = Math.floor(etaMs / 60000);
+            const seconds = Math.floor((etaMs % 60000) / 1000);
+            etaStr = ` - ETA: ${minutes}m ${seconds}s`;
+          } else if (etaMs > 1000) {
+            const seconds = Math.floor(etaMs / 1000);
+            etaStr = ` - ETA: ${seconds}s`;
+          }
+        }
+
+        spinner.update(
+          `Embedding chunks ${embeddedChunks}/${totalChunksToEmbed} (${percentage}%)${etaStr}`
+        );
+
+        // Show tip after 30 seconds for Ollama users
+        if (!tipShown && isUsingOllama && elapsedSec > 30 && !options.json) {
+          console.log('\n💡 Tip: Set OPENAI_API_KEY for 10-100x faster indexing');
+          tipShown = true;
+        }
+      };
+
       // Process files
       let processedFiles = 0;
       for (const file of files) {
@@ -263,7 +337,8 @@ export async function runIndexCommand(
           cache,
           config.chunkSize,
           config.chunkOverlap,
-          config.embedBatchSize
+          config.embedBatchSize,
+          onProgress
         );
 
         // Accumulate chunks and flush in batches
@@ -694,7 +769,8 @@ async function processFile(
   cache: Awaited<ReturnType<typeof openEmbeddingCache>>,
   chunkSize: number,
   chunkOverlap: number,
-  embedBatchSize: number
+  embedBatchSize: number,
+  onProgress?: (chunksProcessed: number) => void
 ): Promise<DocumentChunk[]> {
   // Read file content
   const content = await readFile(file.absolutePath, 'utf-8');
@@ -782,6 +858,9 @@ async function processFile(
         createdAt: new Date().toISOString(),
       };
     }
+
+    // Report progress after processing this batch
+    onProgress?.(batch.length);
   }
 
   return documentChunks;
