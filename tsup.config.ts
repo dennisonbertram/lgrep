@@ -17,10 +17,38 @@ export default defineConfig([
       js: '#!/usr/bin/env node',
     },
   },
-  // Daemon worker entry with shebang
+  // Daemon worker entry with shebang (file watcher)
   {
     entry: {
       'daemon/worker': 'src/daemon/worker.ts',
+    },
+    format: ['esm'],
+    dts: true,
+    sourcemap: true,
+    target: 'node18',
+    shims: true,
+    banner: {
+      js: '#!/usr/bin/env node',
+    },
+  },
+  // Daemon query worker entry with shebang (query server)
+  {
+    entry: {
+      'daemon/query-worker': 'src/daemon/query-worker.ts',
+    },
+    format: ['esm'],
+    dts: true,
+    sourcemap: true,
+    target: 'node18',
+    shims: true,
+    banner: {
+      js: '#!/usr/bin/env node',
+    },
+  },
+  // MCP server entry with shebang
+  {
+    entry: {
+      'mcp/index': 'src/mcp/index.ts',
     },
     format: ['esm'],
     dts: true,

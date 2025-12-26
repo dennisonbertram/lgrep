@@ -13,7 +13,8 @@
     }
   },
   "bin": {
-    "lgrep": "dist/cli/index.js"
+    "lgrep": "dist/cli/index.js",
+    "lgrep-mcp": "dist/mcp/index.js"
   },
   "files": [
     "dist/**/*.js",
@@ -75,6 +76,7 @@
     "@babel/traverse": "^7.28.5",
     "@babel/types": "^7.28.5",
     "@lancedb/lancedb": "^0.13.0",
+    "@modelcontextprotocol/sdk": "^1.25.1",
     "@solidity-parser/parser": "^0.20.2",
     "ai": "^5.0.113",
     "apache-arrow": "^21.1.0",

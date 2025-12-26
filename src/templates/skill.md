@@ -177,6 +177,89 @@ lgrep rename oldName newName --preview --index myproject
 lgrep breaking --index myproject
 ```
 
+### Additional Analysis Commands
+
+**View dependency graph**:
+```bash
+lgrep graph --index myproject
+```
+
+**Get codebase statistics**:
+```bash
+lgrep stats --index myproject
+```
+
+**Explain a symbol or file**:
+```bash
+lgrep explain myFunction --index myproject
+```
+
+## AUTO-CONTEXT TRIGGERS
+
+**CRITICAL: When the user mentions these patterns, AUTOMATICALLY run the corresponding lgrep commands FIRST to gather context, THEN answer their question.**
+
+| User Says | Auto-run | Why |
+|-----------|----------|-----|
+| "refactor X" / "change X" | `lgrep impact X && lgrep callers X` | Show blast radius and all call sites |
+| "rename X to Y" | `lgrep rename X Y --preview` | Preview all locations that need updating |
+| "what calls X" | `lgrep callers X` | Find all call sites with file:line |
+| "what breaks if I change X" | `lgrep impact X` | Show transitive dependencies |
+| "unused code" / "dead code" | `lgrep dead` | Find functions with zero callers |
+| "unused exports" | `lgrep unused-exports` | Find exports never imported |
+| "circular dependencies" | `lgrep cycles` | Detect circular import chains |
+| "similar code" / "duplicate code" | `lgrep similar` | Find code duplication |
+| "optimize imports" / "clean up" | `lgrep dead && lgrep unused-exports` | Find removable code |
+| "architecture overview" | `lgrep stats && lgrep graph` | Show metrics and structure |
+
+### Pattern Matching Examples
+
+**Example 1: Refactoring Request**
+```
+User: "I want to refactor the authenticateUser function"
+
+Your workflow:
+1. Run: lgrep impact authenticateUser
+2. Run: lgrep callers authenticateUser
+3. Analyze output to see what files/functions depend on it
+4. THEN provide refactoring advice with full context
+```
+
+**Example 2: Rename Request**
+```
+User: "Can I rename oldName to newName?"
+
+Your workflow:
+1. Run: lgrep rename oldName newName --preview
+2. Review all locations that would need updating
+3. THEN advise on safety and show exact files to change
+```
+
+**Example 3: Code Quality Check**
+```
+User: "Are there any unused exports in this codebase?"
+
+Your workflow:
+1. Run: lgrep unused-exports
+2. Run: lgrep dead (for completeness)
+3. THEN present findings with recommendations
+```
+
+### Proactive Usage Guidelines
+
+**DO automatically run lgrep when:**
+- User asks about impact, callers, or dependencies
+- User mentions refactoring, renaming, or changing code
+- User asks about code quality, dead code, or unused exports
+- User wants to understand architecture or structure
+- User asks "what breaks if..." or "what uses..."
+
+**DON'T wait for explicit permission** - lgrep is a read-only analysis tool designed for automatic use.
+
+**Pattern recognition tips:**
+- Keywords: refactor, rename, change, impact, blast radius, callers, unused, dead, circular, duplicate
+- Questions: "what if", "what calls", "what breaks", "what depends on"
+- Quality: "clean up", "optimize", "remove unused", "find dead code"
+
 ## Workflows
 
 ### 1. Understanding a New Codebase

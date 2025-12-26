@@ -27,6 +27,13 @@ import { runStatsCommand } from './commands/stats.js';
 import { runLogsCommand, followLogs } from './commands/logs.js';
 import { runSymbolsCommand } from './commands/symbols.js';
 import { runExplainCommand } from './commands/explain.js';
+import {
+  runDaemonStartCommand,
+  runDaemonStopCommand,
+  runDaemonListCommand,
+  runDaemonQueryCommand,
+  runDaemonLogsCommand,
+} from './commands/daemon.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { detectIndexForDirectory } from './utils/auto-detect.js';
 import { openDatabase, deleteIndex } from '../storage/lance.js';
@@ -1123,6 +1130,49 @@ program
     }
   });
 
+// Install MCP command - configure lgrep as MCP server
+program
+  .command('install-mcp')
+  .description('Install lgrep as an MCP server for Claude Code')
+  .option('-f, --force', 'Overwrite existing MCP configuration')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { force?: boolean; json?: boolean }) => {
+    try {
+      const { runInstallMcpCommand } = await import('./commands/install-mcp.js');
+      const result = await runInstallMcpCommand({
+        force: options.force,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('install-mcp', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`\nMCP installation failed: ${result.error}`);
+        process.exit(1);
+      }
+
+      if (result.configAdded) {
+        console.log('\nMCP server configured successfully!');
+        console.log(`  Config file: ${result.settingsPath}`);
+        console.log('\nRestart Claude Code to use lgrep MCP tools.');
+      } else if (result.configAlreadyExists) {
+        console.log('\nMCP server already configured.');
+        console.log(`  Config file: ${result.settingsPath}`);
+        console.log('  Use --force to overwrite existing configuration.');
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
 // Doctor command - check lgrep health and configuration
 program
   .command('doctor')
@@ -1438,6 +1488,215 @@ program
       }
       console.log('\n' + '─'.repeat(50) + '\n');
       console.log(result.explanation);
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Daemon command - manages query servers for instant queries
+const daemonCmd = program
+  .command('daemon')
+  .description('Manage query daemon servers (keeps index in memory for instant queries)');
+
+daemonCmd
+  .command('start [index]')
+  .description('Start the query daemon for an index (auto-detected if not specified)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (indexName: string | undefined, options: { json?: boolean }) => {
+    try {
+      const result = await runDaemonStartCommand(indexName, {
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('daemon-start', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`Failed to start daemon: ${result.error}`);
+        process.exit(1);
+      }
+
+      if (result.error === 'Daemon is already running') {
+        console.log(`Daemon for "${result.daemon!.indexName}" is already running (PID: ${result.daemon!.pid})`);
+      } else {
+        console.log(`Started daemon for "${result.daemon!.indexName}" (PID: ${result.daemon!.pid})`);
+        console.log(`Socket: ${result.daemon!.socketPath}`);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+daemonCmd
+  .command('stop [index]')
+  .description('Stop the query daemon for an index (auto-detected if not specified)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (indexName: string | undefined, options: { json?: boolean }) => {
+    try {
+      const result = await runDaemonStopCommand(indexName, {
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('daemon-stop', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`Failed to stop daemon: ${result.error}`);
+        process.exit(1);
+      }
+
+      if (result.stopped) {
+        console.log('Daemon stopped.');
+      } else {
+        console.log(result.error || 'Daemon was not running.');
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+daemonCmd
+  .command('list')
+  .description('List running query daemons')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    try {
+      const result = await runDaemonListCommand({
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('daemon-list', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`Failed to list daemons: ${result.error}`);
+        process.exit(1);
+      }
+
+      if (!result.daemons || result.daemons.length === 0) {
+        console.log('No query daemons running.');
+        return;
+      }
+
+      console.log('Running query daemons:\n');
+      for (const daemon of result.daemons) {
+        console.log(`  ${daemon.indexName}`);
+        console.log(`    PID: ${daemon.pid}`);
+        console.log(`    Started: ${daemon.startedAt}`);
+        console.log(`    Socket: ${daemon.socketPath}`);
+        console.log();
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+daemonCmd
+  .command('query <method> [params...]')
+  .description('Send a query to the daemon (e.g., daemon query search "my query")')
+  .option('-i, --index <name>', 'Index to query (auto-detected if not specified)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (method: string, paramsArray: string[], options: { index?: string; json?: boolean }) => {
+    try {
+      // Parse params from command line
+      // Format: key=value pairs or just values for positional params
+      const params: Record<string, unknown> = {};
+
+      // Handle common query patterns
+      const firstParam = paramsArray[0];
+      if (method === 'search' && paramsArray.length > 0 && firstParam && !firstParam.includes('=')) {
+        params.query = firstParam;
+        paramsArray = paramsArray.slice(1);
+      } else if (['callers', 'impact', 'similar'].includes(method) && paramsArray.length > 0 && firstParam && !firstParam.includes('=')) {
+        params.symbol = firstParam;
+        paramsArray = paramsArray.slice(1);
+      } else if (method === 'deps' && paramsArray.length > 0 && firstParam && !firstParam.includes('=')) {
+        params.file = firstParam;
+        paramsArray = paramsArray.slice(1);
+      }
+
+      // Parse remaining key=value pairs
+      for (const param of paramsArray) {
+        const [key, value] = param.split('=');
+        if (key && value !== undefined) {
+          // Try to parse as number or boolean
+          if (value === 'true') params[key] = true;
+          else if (value === 'false') params[key] = false;
+          else if (!isNaN(Number(value))) params[key] = Number(value);
+          else params[key] = value;
+        }
+      }
+
+      const result = await runDaemonQueryCommand(method, params, options.index, {
+        json: options.json,
+      });
+
+      if (options.json || !result.success) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      // Pretty print the result
+      console.log(JSON.stringify(result.result, null, 2));
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+daemonCmd
+  .command('logs [index]')
+  .description('View daemon logs')
+  .option('-n, --tail <n>', 'Show last N lines', '50')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (indexName: string | undefined, options: { tail?: string; json?: boolean }) => {
+    try {
+      const result = await runDaemonLogsCommand(indexName, {
+        json: options.json,
+        tail: options.tail ? parseInt(options.tail, 10) : undefined,
+      });
+
+      if (options.json) {
+        console.log(formatAsJson('daemon-logs', result));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+
+      console.log(result.logs);
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));
