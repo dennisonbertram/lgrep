@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { runConfigCommand } from './commands/config.js';
 import { runListCommand } from './commands/list.js';
 import { runDeleteCommand } from './commands/delete.js';
+import { runCleanCommand } from './commands/clean.js';
 import { runIndexCommand } from './commands/index.js';
 import { runSearchCommand } from './commands/search.js';
 import { runAnalyzeCommand } from './commands/analyze.js';
@@ -397,6 +398,27 @@ program
   .action(async (name: string, options: { force?: boolean; json?: boolean }) => {
     try {
       const output = await runDeleteCommand(name, options);
+      console.log(output);
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Clean command - remove zombie indexes stuck in building state
+program
+  .command('clean')
+  .description('Remove zombie indexes stuck in "building" state')
+  .option('-f, --force', 'Skip confirmation')
+  .option('--dry-run', 'Show what would be deleted without deleting')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { force?: boolean; dryRun?: boolean; json?: boolean }) => {
+    try {
+      const output = await runCleanCommand(options);
       console.log(output);
     } catch (err) {
       if (options.json) {

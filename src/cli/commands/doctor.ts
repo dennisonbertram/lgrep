@@ -370,6 +370,54 @@ function checkClaudeIntegration(): CheckResult {
 }
 
 /**
+ * Check for zombie indexes (indexes stuck in "building" state).
+ * These occur when indexing processes crash or are killed.
+ */
+async function checkZombieIndexes(): Promise<CheckResult> {
+  const dbPath = getDbPath();
+  if (!existsSync(dbPath)) {
+    return {
+      name: 'Zombie indexes',
+      status: 'ok',
+      message: 'No indexes to check',
+    };
+  }
+
+  try {
+    const db = await openDatabase(dbPath);
+    const indexes = await listIndexes(db);
+    await db.close();
+
+    // Find indexes stuck in "building" state with 0 chunks
+    const zombieIndexes = indexes.filter(
+      index => index.metadata.status === 'building' && index.metadata.chunkCount === 0
+    );
+
+    if (zombieIndexes.length === 0) {
+      return {
+        name: 'Zombie indexes',
+        status: 'ok',
+        message: 'No zombie indexes detected',
+      };
+    }
+
+    const zombieNames = zombieIndexes.map(i => i.name).join(', ');
+    return {
+      name: 'Zombie indexes',
+      status: 'warn',
+      message: `${zombieIndexes.length} index(es) stuck in building state: ${zombieNames}`,
+      fix: 'Run: lgrep clean',
+    };
+  } catch (error) {
+    return {
+      name: 'Zombie indexes',
+      status: 'error',
+      message: `Failed to check for zombie indexes: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
  * Run the doctor command.
  */
 export async function runDoctorCommand(options: DoctorOptions = {}): Promise<DoctorResult> {
@@ -382,6 +430,7 @@ export async function runDoctorCommand(options: DoctorOptions = {}): Promise<Doc
   checks.push(await checkOllama());
   checks.push(await checkEmbeddingProvider());
   checks.push(await checkIndexes());
+  checks.push(await checkZombieIndexes());
   checks.push(await checkCurrentDirectory(targetPath));
   checks.push(await checkWatcher(targetPath));
   checks.push(checkClaudeIntegration());

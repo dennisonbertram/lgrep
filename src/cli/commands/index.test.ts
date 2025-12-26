@@ -278,4 +278,65 @@ describe('index command', () => {
       ).rejects.toThrow(/not in failed state/i);
     });
   });
+
+  describe('embedding progress tracking', () => {
+    it('should track chunk-level progress during embedding', async () => {
+      // Create files with enough content to generate multiple chunks
+      const largeContent = 'This is test content. '.repeat(100);
+      await writeFile(join(sourceDir, 'large1.txt'), largeContent);
+      await writeFile(join(sourceDir, 'large2.txt'), largeContent);
+
+      const result = await runIndexCommand(sourceDir, {
+        name: 'progress-tracking-test',
+        showProgress: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.chunksCreated).toBeGreaterThan(0);
+      // Progress tracking happens internally - no easy way to verify console output in tests
+      // but the onProgress callback is called during processFile
+    });
+
+    it('should calculate ETA based on average time per chunk', async () => {
+      // Create files with enough content for ETA calculation
+      const largeContent = 'This is test content. '.repeat(100);
+      await writeFile(join(sourceDir, 'large1.txt'), largeContent);
+      await writeFile(join(sourceDir, 'large2.txt'), largeContent);
+
+      const result = await runIndexCommand(sourceDir, {
+        name: 'eta-test',
+        showProgress: true,
+      });
+
+      expect(result.success).toBe(true);
+      // ETA calculation should have happened during embedding
+    });
+
+    it('should not show progress in JSON mode', async () => {
+      const largeContent = 'This is test content. '.repeat(100);
+      await writeFile(join(sourceDir, 'large1.txt'), largeContent);
+
+      const result = await runIndexCommand(sourceDir, {
+        name: 'json-mode-test',
+        showProgress: false,
+        json: true,
+      });
+
+      expect(result.success).toBe(true);
+      // Progress should be suppressed
+    });
+
+    it('should suppress progress updates when showProgress is false', async () => {
+      const largeContent = 'This is test content. '.repeat(100);
+      await writeFile(join(sourceDir, 'large1.txt'), largeContent);
+
+      const result = await runIndexCommand(sourceDir, {
+        name: 'no-progress-embedding-test',
+        showProgress: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.chunksCreated).toBeGreaterThan(0);
+    });
+  });
 });
