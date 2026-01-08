@@ -122,6 +122,9 @@ The following commands run against the same auto-detected index and re-use the c
 | `lgrep unused-exports` | Flag exported symbols that are never imported |
 | `lgrep breaking` | Surface calls whose argument count no longer matches the signature |
 | `lgrep rename <old> <new>` | Preview every reference that would change if you rename a symbol |
+| `lgrep callers <symbol>` | Show all locations that call a given function/method |
+| `lgrep deps <module>` | Show what modules import/depend on a given module |
+| `lgrep impact <symbol>` | Show blast radius if you change a function (direct + transitive callers) |
 
 Each command supports `-i, --index`, `-l, --limit`, and `-j, --json` (when applicable) so you can script them like the existing CLI commands.
 
@@ -241,13 +244,45 @@ lgrep explain authenticateUser   # Explain a symbol
 lgrep explain validateToken -m groq:llama-3.3-70b  # Use specific model
 ```
 
-### `lgrep watch <index-name>`
+### `lgrep install`
+
+Install lgrep integration with Claude Code.
+
+```bash
+lgrep install                  # Interactive setup
+lgrep install --yes            # Non-interactive, accept defaults
+lgrep install --add-to-project # Also add to current project's CLAUDE.md
+lgrep install --skip-skill     # Skip skill creation
+lgrep install --skip-hook      # Skip SessionStart hook
+```
+
+### `lgrep analyze <path>`
+
+Analyze code structure without indexing. Useful for one-off analysis.
+
+```bash
+lgrep analyze ./src                    # Analyze directory
+lgrep analyze ./src --symbols          # List all symbols
+lgrep analyze ./src --deps             # Show dependency graph
+lgrep analyze ./src --calls            # Show call graph
+lgrep analyze ./src --file auth.ts     # Analyze single file
+```
+
+### `lgrep watch <path>`
 
 Watch for file changes and update index automatically.
 
 ```bash
-lgrep watch my-project         # Start watching
-lgrep watch my-project --stop  # Stop watching
+lgrep watch .                  # Start watching current directory
+lgrep watch ./src --name proj  # Watch with custom index name
+```
+
+### `lgrep stop <index-name>`
+
+Stop a running watcher.
+
+```bash
+lgrep stop my-project          # Stop watching
 ```
 
 ### `lgrep delete <index-name>`
@@ -366,7 +401,12 @@ const response = await provider.generateText('Explain this code...');
 
 ## Configuration
 
-Configuration is stored in `~/.lgrep/config.json`:
+Configuration is stored in a platform-specific location:
+- **macOS**: `~/Library/Application Support/lgrep/config.json`
+- **Linux**: `~/.config/lgrep/config.json` (or `$XDG_CONFIG_HOME/lgrep/`)
+- **Windows**: `%APPDATA%\lgrep\config.json`
+
+Override with `LGREP_HOME` environment variable.
 
 ```json
 {
@@ -414,10 +454,41 @@ Optimized for large codebases:
 
 ## Integration with Claude Code
 
-lgrep works great with Claude Code for AI-assisted development:
+lgrep integrates with Claude Code as a skill for AI-assisted development.
+
+### Installation
 
 ```bash
-# In Claude Code, lgrep auto-detects ANTHROPIC_API_KEY
+lgrep install
+```
+
+This sets up:
+1. **Skill** (`~/.claude/skills/lgrep-search/SKILL.md`) - Teaches Claude when and how to use lgrep
+2. **SessionStart hook** - Auto-starts file watchers when Claude Code sessions begin
+3. **CLAUDE.md** - Adds usage instructions to your global Claude config
+
+### Usage
+
+After installation, Claude Code will automatically use lgrep for:
+- Semantic code search ("find authentication logic")
+- Code intelligence ("what calls this function")
+- Dead code detection ("find unused functions")
+- Impact analysis ("what breaks if I change X")
+- Context building for tasks
+
+### Invoking the Skill
+
+```bash
+# In Claude Code, use the skill directly:
+/lgrep-search
+
+# Or Claude will invoke it automatically for relevant queries
+```
+
+### Manual Usage
+
+```bash
+# Index and search
 lgrep index .
 lgrep context "implement feature X" --suggest
 ```
