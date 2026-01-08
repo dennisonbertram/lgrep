@@ -249,11 +249,10 @@ lgrep explain validateToken -m groq:llama-3.3-70b  # Use specific model
 Install lgrep integration with Claude Code.
 
 ```bash
-lgrep install                  # Interactive setup
-lgrep install --yes            # Non-interactive, accept defaults
-lgrep install --add-to-project # Also add to current project's CLAUDE.md
-lgrep install --skip-skill     # Skip skill creation
-lgrep install --skip-hook      # Skip SessionStart hook
+lgrep install                  # Install skill + SessionStart hook
+lgrep install --skip-hook      # Skip SessionStart hook (skill only)
+lgrep install --add-to-claude-md  # Also add to ~/.claude/CLAUDE.md (optional)
+lgrep install --add-to-project    # Also add to project CLAUDE.md (optional)
 ```
 
 ### `lgrep analyze <path>`
@@ -464,8 +463,9 @@ lgrep install
 
 This sets up:
 1. **Skill** (`~/.claude/skills/lgrep-search/SKILL.md`) - Teaches Claude when and how to use lgrep
-2. **SessionStart hook** - Auto-starts file watchers when Claude Code sessions begin
-3. **CLAUDE.md** - Adds usage instructions to your global Claude config
+2. **SessionStart hook** (optional) - Auto-starts file watchers when sessions begin
+
+The skill is the primary integration - Claude Code automatically loads skills and knows when to use them based on the skill's description and trigger phrases.
 
 ### Usage
 
@@ -476,21 +476,9 @@ After installation, Claude Code will automatically use lgrep for:
 - Impact analysis ("what breaks if I change X")
 - Context building for tasks
 
-### Invoking the Skill
-
+You can also invoke the skill directly:
 ```bash
-# In Claude Code, use the skill directly:
 /lgrep-search
-
-# Or Claude will invoke it automatically for relevant queries
-```
-
-### Manual Usage
-
-```bash
-# Index and search
-lgrep index .
-lgrep context "implement feature X" --suggest
 ```
 
 ## License

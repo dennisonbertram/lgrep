@@ -13,8 +13,8 @@ const __dirname = path.dirname(__filename);
 export interface InstallOptions {
   skipSkill?: boolean;
   skipHook?: boolean;
-  skipClaudeMd?: boolean;
-  addToProject?: boolean;
+  addToClaudeMd?: boolean;  // Opt-in: add to ~/.claude/CLAUDE.md
+  addToProject?: boolean;   // Opt-in: add to project CLAUDE.md
   yes?: boolean;
   json?: boolean;
 }
@@ -276,7 +276,7 @@ async function updateProjectClaudeMd(): Promise<{ updated: boolean; alreadyHasLg
 export async function runInstallCommand(
   options: InstallOptions = {}
 ): Promise<InstallResult> {
-  const { skipSkill = false, skipHook = false, skipClaudeMd = false, addToProject = false, yes = false, json = false } = options;
+  const { skipSkill = false, skipHook = false, addToClaudeMd = false, addToProject = false, yes = false, json = false } = options;
 
   const result: InstallResult = {
     success: false,
@@ -289,7 +289,7 @@ export async function runInstallCommand(
   try {
     const homedir = os.homedir();
 
-    // Create skill
+    // Create skill (this is the primary integration - skill files are auto-loaded by Claude Code)
     if (!skipSkill) {
       const skillResult = await createSkill(homedir);
       result.skillCreated = skillResult.created;
@@ -305,46 +305,15 @@ export async function runInstallCommand(
       result.settingsPath = hookResult.path;
     }
 
-    // Update user's global ~/.claude/CLAUDE.md (with permission)
-    if (!skipClaudeMd) {
-      const claudeMdPath = path.join(homedir, '.claude', 'CLAUDE.md');
-      let shouldUpdate = yes || json; // Skip prompt for --yes or --json
-
-      if (!shouldUpdate) {
-        // Check if file exists and needs updating
-        const existsAlready = await fileExists(claudeMdPath);
-        if (existsAlready) {
-          const content = await fs.readFile(claudeMdPath, 'utf-8');
-          if (content.includes('## lgrep') || content.includes('# lgrep')) {
-            // Already has lgrep section, no need to prompt
-            result.userClaudeMdUpdated = false;
-            result.userClaudeMdAlreadyHasLgrep = true;
-            result.userClaudeMdPath = claudeMdPath;
-          } else {
-            // Prompt for permission
-            console.log(`\nThis will add lgrep instructions to your Claude config at:`);
-            console.log(`  ${claudeMdPath}`);
-            shouldUpdate = await promptConfirm('Update CLAUDE.md?');
-          }
-        } else {
-          // File doesn't exist, prompt for permission
-          console.log(`\nThis will create a Claude config with lgrep instructions at:`);
-          console.log(`  ${claudeMdPath}`);
-          shouldUpdate = await promptConfirm('Create CLAUDE.md?');
-        }
-      }
-
-      if (shouldUpdate && !result.userClaudeMdAlreadyHasLgrep) {
-        const userClaudeMdResult = await updateUserClaudeMd(homedir);
-        result.userClaudeMdUpdated = userClaudeMdResult.updated;
-        result.userClaudeMdAlreadyHasLgrep = userClaudeMdResult.alreadyHasLgrep;
-        result.userClaudeMdPath = userClaudeMdResult.path;
-      } else if (!result.userClaudeMdPath) {
-        result.userClaudeMdPath = claudeMdPath;
-      }
+    // Update user's global ~/.claude/CLAUDE.md (opt-in only)
+    if (addToClaudeMd) {
+      const userClaudeMdResult = await updateUserClaudeMd(homedir);
+      result.userClaudeMdUpdated = userClaudeMdResult.updated;
+      result.userClaudeMdAlreadyHasLgrep = userClaudeMdResult.alreadyHasLgrep;
+      result.userClaudeMdPath = userClaudeMdResult.path;
     }
 
-    // Update project CLAUDE.md (opt-in)
+    // Update project CLAUDE.md (opt-in only)
     if (addToProject) {
       const claudeMdResult = await updateProjectClaudeMd();
       result.projectClaudeUpdated = claudeMdResult.updated;
