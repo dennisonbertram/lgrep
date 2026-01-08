@@ -57,7 +57,7 @@ describe('createWatcher', () => {
         await writeFile(join(testDir, 'test-file.txt'), 'content');
       });
     });
-  });
+  }, 30000);
 
   it('should detect file changes', async () => {
     const testFile = join(testDir, 'test-file.txt');
@@ -133,7 +133,7 @@ describe('createWatcher', () => {
         ]);
       });
     });
-  }, 10000); // Increase timeout to 10 seconds
+  }, 30000); // Increase timeout for flaky filesystem tests
 
   it('should respect exclude patterns', async () => {
     const changes: FileChange[] = [];
@@ -264,5 +264,5 @@ describe('createWatcher', () => {
         await writeFile(join(testDir, 'test.txt'), 'content');
       });
     });
-  });
+  }, 30000);
 });

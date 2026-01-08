@@ -294,14 +294,14 @@ describe('install command', () => {
   });
 
   describe('user CLAUDE.md', () => {
-    it('should update user CLAUDE.md with --yes flag', async () => {
+    it('should update user CLAUDE.md with addToClaudeMd option', async () => {
       vi.mocked(fs.mkdir).mockResolvedValue(undefined);
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
-        yes: true,
+        addToClaudeMd: true,
         json: false,
       });
 
@@ -310,13 +310,14 @@ describe('install command', () => {
       expect(result.userClaudeMdPath).toContain('.claude/CLAUDE.md');
     });
 
-    it('should update user CLAUDE.md with --json flag (no prompt)', async () => {
+    it('should update user CLAUDE.md with addToClaudeMd in JSON mode', async () => {
       vi.mocked(fs.mkdir).mockResolvedValue(undefined);
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
+        addToClaudeMd: true,
         json: true,
       });
 
@@ -325,11 +326,10 @@ describe('install command', () => {
       expect(result.userClaudeMdPath).toContain('.claude/CLAUDE.md');
     });
 
-    it('should skip user CLAUDE.md when --skip-claude-md flag is set', async () => {
+    it('should skip user CLAUDE.md when addToClaudeMd is not set', async () => {
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
-        skipClaudeMd: true,
         json: false,
       });
 
@@ -362,7 +362,7 @@ describe('install command', () => {
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
-        yes: true,
+        addToClaudeMd: true,
         json: false,
       });
 

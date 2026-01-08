@@ -7,8 +7,9 @@ import { createServer, Socket, Server } from 'node:net';
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { getLgrepHome } from '../cli/utils/paths.js';
-import { openDatabase, getIndex, searchChunks, rerankerWithMMR, type Database, type IndexHandle } from '../storage/lance.js';
-import { getCalls, searchSymbols, getSymbols, type CallRelation, type SymbolRecord } from '../storage/code-intel.js';
+import { openDatabase, getIndex, searchChunks, rerankerWithMMR, type IndexDatabase, type IndexHandle } from '../storage/lance.js';
+import { getCalls, searchSymbols, getSymbols } from '../storage/code-intel.js';
+import type { CallEdge, CodeSymbol } from '../types/code-intel.js';
 import { createEmbeddingClient, type EmbeddingClient } from '../core/embeddings.js';
 import { loadConfig } from '../storage/config.js';
 import { getDbPath } from '../cli/utils/paths.js';
@@ -43,11 +44,11 @@ export interface JsonRpcResponse {
 export class QueryServer {
   private server: Server | null = null;
   private socketPath: string;
-  private db: Database | null = null;
+  private db: IndexDatabase | null = null;
   private indexHandle: IndexHandle | null = null;
   private embedClient: EmbeddingClient | null = null;
-  private allCalls: CallRelation[] | null = null;
-  private allSymbols: SymbolRecord[] | null = null;
+  private allCalls: CallEdge[] | null = null;
+  private allSymbols: CodeSymbol[] | null = null;
   private indexName: string;
   private isShuttingDown = false;
 

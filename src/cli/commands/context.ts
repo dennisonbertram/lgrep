@@ -18,6 +18,7 @@ export interface ContextCommandOptions {
   noApproach?: boolean;
   format?: 'json' | 'markdown';
   json?: boolean;
+  showProgress?: boolean;
 }
 
 /**

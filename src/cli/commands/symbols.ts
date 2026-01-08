@@ -37,6 +37,7 @@ export interface SymbolsOptions {
   file?: string;
   limit?: number;
   json?: boolean;
+  showProgress?: boolean;
 }
 
 /**

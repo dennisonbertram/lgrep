@@ -432,6 +432,91 @@ export async function clearCodeIntel(
 }
 
 /**
+ * Create the code intelligence tables for an index.
+ * This should be called before parallel processing to avoid race conditions.
+ */
+export async function createCodeIntelTables(
+  db: IndexDatabase,
+  indexName: string
+): Promise<void> {
+  const tableNames = await db.connection.tableNames();
+
+  // Create symbols table if it doesn't exist
+  const symbolsTableName = `${indexName}_symbols`;
+  if (!tableNames.includes(symbolsTableName)) {
+    const placeholder = {
+      id: '__placeholder__',
+      name: '',
+      kind: 'function',
+      file_path: '',
+      relative_path: '',
+      line_start: 0,
+      line_end: 0,
+      column_start: 0,
+      column_end: 0,
+      is_exported: 0,
+      is_default_export: 0,
+      documentation: '',
+      signature: '',
+      parent_id: '',
+      modifiers: '[]',
+      summary: '',
+      summary_model: '',
+      summary_generated_at: '',
+      body_hash: '',
+      index_name: indexName,
+      created_at: new Date().toISOString(),
+    };
+    await db.connection.createTable(symbolsTableName, [placeholder]);
+    const table = await db.connection.openTable(symbolsTableName);
+    await table.delete("id = '__placeholder__'");
+  }
+
+  // Create dependencies table if it doesn't exist
+  const depsTableName = `${indexName}_dependencies`;
+  if (!tableNames.includes(depsTableName)) {
+    const placeholder = {
+      id: '__placeholder__',
+      source_file: '',
+      target_module: '',
+      resolved_path: '',
+      kind: 'import',
+      names: '[]',
+      line: 0,
+      is_external: 0,
+      index_name: indexName,
+      created_at: new Date().toISOString(),
+    };
+    await db.connection.createTable(depsTableName, [placeholder]);
+    const table = await db.connection.openTable(depsTableName);
+    await table.delete("id = '__placeholder__'");
+  }
+
+  // Create calls table if it doesn't exist
+  const callsTableName = `${indexName}_calls`;
+  if (!tableNames.includes(callsTableName)) {
+    const placeholder = {
+      id: '__placeholder__',
+      caller_id: '',
+      caller_file: '',
+      callee_name: '',
+      callee_id: '',
+      callee_file: '',
+      line: 0,
+      column: 0,
+      is_method_call: 0,
+      receiver: '',
+      argument_count: 0,
+      index_name: indexName,
+      created_at: new Date().toISOString(),
+    };
+    await db.connection.createTable(callsTableName, [placeholder]);
+    const table = await db.connection.openTable(callsTableName);
+    await table.delete("id = '__placeholder__'");
+  }
+}
+
+/**
  * Get statistics about code intelligence data.
  */
 export async function getCodeIntelStats(

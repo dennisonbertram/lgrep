@@ -51,6 +51,7 @@ export interface StatsOptions {
   index?: string;
   all?: boolean;
   json?: boolean;
+  showProgress?: boolean;
 }
 
 /**

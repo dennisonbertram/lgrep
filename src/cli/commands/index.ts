@@ -37,6 +37,7 @@ import {
   addDependencies,
   addCalls,
   updateSymbolSummary,
+  createCodeIntelTables,
 } from '../../storage/code-intel.js';
 import type { CodeSymbol, CodeDependency, CallEdge } from '../../types/code-intel.js';
 import { createSummarizerClient } from '../../core/summarizer.js';
@@ -145,6 +146,9 @@ export async function runIndexCommand(
         spinner?.update('Clearing failed index data...');
         await deleteAllChunks(db, handle);
 
+        // Ensure code intelligence tables exist
+        await createCodeIntelTables(db, indexName);
+
         // Update status to building
         await updateIndexStatus(db, handle, 'building');
       } else if (mode === 'update') {
@@ -167,6 +171,9 @@ export async function runIndexCommand(
           // No metadata or empty - fall back to chunk scan (migration path)
           existingHashes = await getFileContentHashes(db, handle);
         }
+
+        // Ensure code intelligence tables exist (for migration from older indexes)
+        await createCodeIntelTables(db, indexName);
       } else {
         // Create mode: index must not exist
         spinner?.update('Creating index...');
@@ -178,6 +185,8 @@ export async function runIndexCommand(
         });
         // Create file metadata table for hash optimization
         await createFileMetadataTable(db, handle);
+        // Create code intelligence tables to avoid race conditions in parallel processing
+        await createCodeIntelTables(db, indexName);
       }
 
       // Walk files
@@ -302,7 +311,7 @@ export async function runIndexCommand(
           chunkContent: string;
           fileIndex: number;
           chunkIndex: number;
-          textChunk: { index: number; startLine: number; endLine: number };
+          textChunk: { index: number; startLine?: number; endLine?: number };
         };
 
         const cachedDocumentChunks: Map<number, DocumentChunk[]> = new Map();

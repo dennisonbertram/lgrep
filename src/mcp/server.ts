@@ -3,11 +3,12 @@
  * Uses the @modelcontextprotocol/sdk for JSON-RPC over stdio.
  */
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { Server } from '@modelcontextprotocol/sdk/server';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  type CallToolRequest,
 } from '@modelcontextprotocol/sdk/types.js';
 import { LGREP_TOOLS } from './tools.js';
 import { handleToolCall } from './handlers.js';
@@ -40,7 +41,7 @@ export function createMCPServer(): Server {
   });
 
   // Handle tools/call request
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
     const { name, arguments: args } = request.params;
 
     try {
