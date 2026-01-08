@@ -2,6 +2,7 @@
 # lgrep SessionStart hook
 # Auto-starts watcher for current directory if not already running
 # Resource-aware: limits concurrent indexing
+# Auto-cleans zombies and failed indexes on startup
 
 set -e
 
@@ -11,6 +12,15 @@ CWD=$(pwd)
 # === RESOURCE LIMITS ===
 MAX_CONCURRENT_BUILDING=1  # Only allow 1 index to build at a time
 MAX_TOTAL_WATCHERS=3       # Maximum total watchers running
+
+# === AUTO-CLEANUP ON STARTUP ===
+# Clean zombies and failed indexes silently
+if command -v lgrep &> /dev/null; then
+  CLEANED=$(lgrep clean --zombies --failed --json 2>/dev/null | jq -r '.data.deleted // 0' 2>/dev/null || echo "0")
+  if [ "$CLEANED" -gt 0 ]; then
+    echo "🧹 lgrep: Auto-cleaned $CLEANED stale index(es)"
+  fi
+fi
 
 # Only index if this looks like a project (has common project markers)
 PROJECT_MARKERS=(
