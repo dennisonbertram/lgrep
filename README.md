@@ -2,6 +2,8 @@
 
 Local semantic code search CLI - AI-powered grep with embeddings.
 
+**Why lgrep?** Traditional grep finds text patterns, but lgrep understands code. Search for "authentication logic" and find OAuth handlers, JWT validation, and session management—even if those words never appear in the code. Plus built-in code intelligence: find dead code, circular dependencies, and see the blast radius before refactoring. Works locally with Ollama or blazing fast with cloud APIs.
+
 ## Prerequisites
 
 lgrep requires an embedding provider. Choose one:
@@ -478,3 +480,8 @@ cd lgrep
 npm install
 npm test
 ```
+
+## Authors
+
+- **Dennison Bertram** ([@dennisonbertram](https://github.com/dennisonbertram)) - Creator
+- **Claude** (Anthropic) - AI pair programmer
