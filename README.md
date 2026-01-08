@@ -2,37 +2,46 @@
 
 Local semantic code search CLI - AI-powered grep with embeddings.
 
+## Prerequisites
+
+lgrep requires an embedding provider. Choose one:
+
+| Provider | Setup | Speed | Cost |
+|----------|-------|-------|------|
+| **OpenAI** (recommended) | `export OPENAI_API_KEY=sk-...` | ~50ms | ~$0.02/1M tokens |
+| **Voyage** (best for code) | `export VOYAGE_API_KEY=...` | ~100ms | ~$0.06/1M tokens |
+| **Cohere** | `export COHERE_API_KEY=...` | ~50ms | ~$0.10/1M tokens |
+| **Ollama** (local/free) | `lgrep setup` | ~1-5s | Free |
+
+**Without one of these configured, indexing will fail.**
+
+## Installation
+
 ```bash
+# 1. Install lgrep
 npm install -g lgrep
+
+# 2. Configure embedding provider (choose one):
+
+# Option A: Use OpenAI (fast, recommended)
+export OPENAI_API_KEY=sk-...
+
+# Option B: Use local Ollama (private, free, slower)
+lgrep setup   # Downloads Ollama + ~2GB of models
+
+# 3. Verify setup
+lgrep doctor
 ```
-
-## Features
-
-- **Semantic Search** - Find code by meaning, not just text matching
-- **Auto-Detection** - Automatically detects the right index from your current directory
-- **Multi-Provider AI** - Embeddings: OpenAI, Cohere, Voyage, Ollama | LLM: Groq, Anthropic, OpenAI, Ollama
-- **Code Intelligence** - Understands symbols, calls, and dependencies
-- **Privacy-First** - Run completely locally with Ollama
-- **Fast** - LanceDB vector storage, incremental indexing
-- **Watch Mode** - Auto-update indexes on file changes
-- **Natural Language Intent** - `lgrep intent "<prompt>"` routes casual queries to the right code-intel command
-- **High-Impact Code Intelligence** - Built-in `dead`, `similar`, `cycles`, `unused-exports`, `breaking`, and `rename` helpers
 
 ## Quick Start
 
 ```bash
-# Setup Ollama (local, private)
-lgrep setup
-
 # Index your project
 lgrep index ./my-project
 
-# Search semantically (auto-detects index from current directory)
+# Search semantically
 cd my-project
 lgrep search "user authentication logic"
-
-# Or specify index explicitly
-lgrep search "user authentication logic" --index my-project
 
 # Find symbol usages
 lgrep search --usages "validateUser"
@@ -44,28 +53,30 @@ lgrep search --definition "UserService"
 lgrep context "add rate limiting to the API"
 ```
 
-## Installation
+## Claude Code Integration
+
+Install lgrep as a Claude Code skill:
 
 ```bash
-npm install -g lgrep
+lgrep install
 ```
 
-### Requirements
+This adds:
+- **Skill** - Claude learns when/how to use lgrep automatically
+- **SessionStart hook** - Auto-indexes repos when you open them in Claude Code
 
-- Node.js >= 18.17
-- [Ollama](https://ollama.ai) (for local mode) or API key for cloud providers
+After installation, Claude will use lgrep for semantic search, code intelligence, and context building.
 
-### Setup Local Mode (Ollama)
+## Features
 
-```bash
-# Install Ollama from https://ollama.ai
-# Then run setup:
-lgrep setup
-```
-
-This pulls the required models:
-- `mxbai-embed-large` - For embeddings
-- `llama3.2:3b` - For code summarization
+- **Semantic Search** - Find code by meaning, not just text matching
+- **Code Intelligence** - Understands symbols, calls, and dependencies
+- **Multi-Provider** - OpenAI, Cohere, Voyage, or local Ollama
+- **Privacy-First** - Run completely locally with Ollama
+- **Fast** - LanceDB vector storage, parallel processing, incremental indexing
+- **Watch Mode** - Auto-update indexes on file changes
+- **Natural Language** - `lgrep intent "<prompt>"` routes queries to the right command
+- **Refactoring Tools** - Dead code, circular deps, unused exports, impact analysis
 
 ## Commands
 
@@ -450,36 +461,6 @@ Optimized for large codebases:
 | 1,000 files | ~150MB | ~2 min |
 | 5,000 files | ~200MB | ~10 min |
 | 10,000 files | ~300MB | ~20 min |
-
-## Integration with Claude Code
-
-lgrep integrates with Claude Code as a skill for AI-assisted development.
-
-### Installation
-
-```bash
-lgrep install
-```
-
-This sets up:
-1. **Skill** (`~/.claude/skills/lgrep-search/SKILL.md`) - Teaches Claude when and how to use lgrep
-2. **SessionStart hook** (optional) - Auto-starts file watchers when sessions begin
-
-The skill is the primary integration - Claude Code automatically loads skills and knows when to use them based on the skill's description and trigger phrases.
-
-### Usage
-
-After installation, Claude Code will automatically use lgrep for:
-- Semantic code search ("find authentication logic")
-- Code intelligence ("what calls this function")
-- Dead code detection ("find unused functions")
-- Impact analysis ("what breaks if I change X")
-- Context building for tasks
-
-You can also invoke the skill directly:
-```bash
-/lgrep-search
-```
 
 ## License
 
