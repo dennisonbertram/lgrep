@@ -11,9 +11,11 @@ lgrep requires an embedding provider. Choose one:
 | **OpenAI** (recommended) | `export OPENAI_API_KEY=sk-...` | ~50ms | ~$0.02/1M tokens |
 | **Voyage** (best for code) | `export VOYAGE_API_KEY=...` | ~100ms | ~$0.06/1M tokens |
 | **Cohere** | `export COHERE_API_KEY=...` | ~50ms | ~$0.10/1M tokens |
-| **Ollama** (local/free) | `lgrep setup` | ~1-5s | Free |
+| **Ollama** (local/free) | `lgrep setup` | ~1-5s | Free (downloads ~2GB) |
 
 **Without one of these configured, indexing will fail.**
+
+> **Note:** `lgrep setup` auto-installs Ollama and downloads the required AI models (~2GB). This is the easiest option if you don't have API keys.
 
 ## Installation
 
