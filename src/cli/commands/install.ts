@@ -90,17 +90,26 @@ async function fileExists(filePath: string): Promise<boolean> {
  * Load template content.
  */
 async function loadTemplate(name: string): Promise<string> {
-  // In development: src/templates/
-  // In production (dist): templates are copied to dist/ root by tsup publicDir
-  const devPath = path.join(__dirname, '..', '..', 'templates', name);
-  const prodPath = path.join(__dirname, '..', '..', name);
+  // After bundling, CLI is at dist/cli/index.js
+  // Templates are at dist/ (one level up from dist/cli/)
+  // In dev with ts-node: __dirname is src/cli/commands, templates are at src/templates/
 
-  try {
-    return await fs.readFile(devPath, 'utf-8');
-  } catch {
-    // Try production path
-    return await fs.readFile(prodPath, 'utf-8');
+  // Try multiple paths in order of likelihood:
+  const paths = [
+    path.join(__dirname, '..', name),           // dist/cli -> dist/ (bundled production)
+    path.join(__dirname, '..', '..', name),     // dist/cli/commands -> dist/ (unbundled production)
+    path.join(__dirname, '..', '..', 'templates', name), // src/cli/commands -> src/templates/ (dev)
+  ];
+
+  for (const templatePath of paths) {
+    try {
+      return await fs.readFile(templatePath, 'utf-8');
+    } catch {
+      // Try next path
+    }
   }
+
+  throw new Error(`Template '${name}' not found. Searched: ${paths.join(', ')}`);
 }
 
 /**
