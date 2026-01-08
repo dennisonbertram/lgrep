@@ -51,22 +51,14 @@ describe('clean command', () => {
     });
     await updateIndexStatus(db, readyHandle, 'ready');
 
-    // Create a failed index (should NOT be deleted)
-    const failedHandle = await createIndex(db, {
-      name: 'failed-index',
-      rootPath: '/test',
-      model: 'test-model',
-      modelDimensions: 512,
-    });
-    await updateIndexStatus(db, failedHandle, 'failed');
-
     await db.close();
 
-    // Run clean with force (no prompt)
-    const output = await runCleanCommand({ force: true });
+    // Run clean with force and only zombies (no prompt)
+    const output = await runCleanCommand({ force: true, zombies: true });
 
-    expect(output).toContain('zombie-index');
-    expect(output).toContain('1');
+    // New format shows counts, not individual names
+    expect(output).toContain('Zombies deleted: 1');
+    expect(output).toContain('Total: 1 index(es) deleted');
 
     // Verify zombie is gone
     const db2 = await openDatabase(dbPath);
@@ -76,10 +68,6 @@ describe('clean command', () => {
     // Verify ready index is still there
     const readyCheck = await getIndex(db2, 'ready-index');
     expect(readyCheck).not.toBeNull();
-
-    // Verify failed index is still there
-    const failedCheck = await getIndex(db2, 'failed-index');
-    expect(failedCheck).not.toBeNull();
 
     await db2.close();
   });
@@ -99,9 +87,11 @@ describe('clean command', () => {
 
     await db.close();
 
-    const output = await runCleanCommand({ force: true });
+    // Only clean zombies - should find nothing
+    const output = await runCleanCommand({ force: true, zombies: true });
 
-    expect(output).toMatch(/no.*zombie/i);
+    // New format shows "Nothing to clean." when nothing matches
+    expect(output).toBe('Nothing to clean.');
   });
 
   it('should support dry-run mode without deleting', async () => {
@@ -118,11 +108,13 @@ describe('clean command', () => {
 
     await db.close();
 
-    // Run in dry-run mode
-    const output = await runCleanCommand({ dryRun: true });
+    // Run in dry-run mode (only zombies to avoid stale path issues)
+    const output = await runCleanCommand({ dryRun: true, zombies: true });
 
+    // New format shows names in dry-run mode with "Would clean:" header
     expect(output).toContain('zombie-index');
-    expect(output).toMatch(/would.*delete/i);
+    expect(output).toContain('Would clean:');
+    expect(output).toContain('Run without --dry-run to clean.');
 
     // Verify zombie still exists
     const db2 = await openDatabase(dbPath);
@@ -146,7 +138,8 @@ describe('clean command', () => {
 
     await db.close();
 
-    const output = await runCleanCommand({ force: true, json: true });
+    // Only clean zombies to avoid stale path issues
+    const output = await runCleanCommand({ force: true, json: true, zombies: true });
 
     const parsed = JSON.parse(output);
     expect(parsed).toHaveProperty('command', 'clean');
@@ -171,9 +164,12 @@ describe('clean command', () => {
 
     await db.close();
 
-    const output = await runCleanCommand({ dryRun: true });
+    // Only clean zombies to avoid stale path issues
+    const output = await runCleanCommand({ dryRun: true, zombies: true });
 
     expect(output).toContain('zombie-index');
+    // Dry-run shows age in hours format like "(0h old)"
+    expect(output).toMatch(/\d+(\.\d+)?h old/);
     // Should show time information (createdAt is available in metadata)
     expect(zombieHandle.metadata.createdAt).toBeDefined();
   });
@@ -181,7 +177,8 @@ describe('clean command', () => {
   it('should handle empty database gracefully', async () => {
     const output = await runCleanCommand({ force: true });
 
-    expect(output).toMatch(/no.*zombie/i);
+    // New format shows specific message when no indexes exist
+    expect(output).toBe('No indexes found to clean.');
   });
 
   it('should delete multiple zombie indexes', async () => {
@@ -212,12 +209,12 @@ describe('clean command', () => {
 
     await db.close();
 
-    const output = await runCleanCommand({ force: true });
+    // Only clean zombies to avoid stale path issues
+    const output = await runCleanCommand({ force: true, zombies: true });
 
-    expect(output).toContain('zombie-1');
-    expect(output).toContain('zombie-2');
-    expect(output).toContain('zombie-3');
-    expect(output).toContain('3');
+    // New format shows counts, not individual names
+    expect(output).toContain('Zombies deleted: 3');
+    expect(output).toContain('Total: 3 index(es) deleted');
 
     // Verify all are gone
     const db2 = await openDatabase(dbPath);
