@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { openDatabase, listIndexes, deleteIndex } from '../../storage/lance.js';
 import { getDbPath } from '../utils/paths.js';
+import { DaemonManager } from '../../daemon/manager.js';
 
 /**
  * Options for the clean command.
@@ -9,6 +10,28 @@ export interface CleanOptions {
   force?: boolean;
   dryRun?: boolean;
   json?: boolean;
+  /** Clean failed indexes */
+  failed?: boolean;
+  /** Clean indexes with missing paths (stale) */
+  stale?: boolean;
+  /** Clean zombie indexes (stuck building with 0 chunks) */
+  zombies?: boolean;
+  /** Stop orphaned watchers */
+  watchers?: boolean;
+  /** Clean all types (default if no specific type given) */
+  all?: boolean;
+}
+
+/**
+ * Categorized index for cleanup.
+ */
+interface CleanableIndex {
+  name: string;
+  path: string;
+  status: string;
+  createdAt: string;
+  ageInHours: number;
+  reason: 'zombie' | 'failed' | 'stale';
 }
 
 /**
@@ -16,12 +39,11 @@ export interface CleanOptions {
  */
 export interface CleanResult {
   zombiesFound: number;
+  failedFound: number;
+  staleFound: number;
+  watchersStopped: number;
   deleted: number;
-  zombies: Array<{
-    name: string;
-    createdAt: string;
-    ageInHours: number;
-  }>;
+  indexes: CleanableIndex[];
 }
 
 /**
@@ -45,16 +67,26 @@ export async function runCleanCommand(
 ): Promise<string> {
   const dbPath = getDbPath();
 
+  // If no specific type given, clean all
+  const cleanAll = options.all || (!options.failed && !options.stale && !options.zombies && !options.watchers);
+  const cleanFailed = cleanAll || options.failed;
+  const cleanStale = cleanAll || options.stale;
+  const cleanZombies = cleanAll || options.zombies;
+  const cleanWatchers = cleanAll || options.watchers;
+
   if (!existsSync(dbPath)) {
-    const message = 'No zombie indexes found.';
+    const message = 'No indexes found to clean.';
     if (options.json) {
       return JSON.stringify({
         command: 'clean',
         message,
         data: {
           zombiesFound: 0,
+          failedFound: 0,
+          staleFound: 0,
+          watchersStopped: 0,
           deleted: 0,
-          zombies: [],
+          indexes: [],
         },
       });
     }
@@ -62,53 +94,118 @@ export async function runCleanCommand(
   }
 
   const db = await openDatabase(dbPath);
+  const manager = new DaemonManager();
 
   try {
     // Get all indexes
     const indexes = await listIndexes(db);
+    const cleanable: CleanableIndex[] = [];
 
-    // Filter for zombie indexes (stuck in building state with 0 chunks)
-    const zombies = indexes.filter(
-      idx => idx.metadata.status === 'building' && idx.metadata.chunkCount === 0
-    );
+    // Get running watchers
+    const runningWatchers = await manager.list();
 
-    if (zombies.length === 0) {
-      const message = 'No zombie indexes found.';
+    // Categorize indexes for cleanup
+    for (const idx of indexes) {
+      const ageInHours = calculateAgeInHours(idx.metadata.createdAt);
+      const pathExists = existsSync(idx.metadata.rootPath);
+
+      // Zombie: stuck in building with 0 chunks
+      if (cleanZombies && idx.metadata.status === 'building' && idx.metadata.chunkCount === 0) {
+        cleanable.push({
+          name: idx.name,
+          path: idx.metadata.rootPath,
+          status: idx.metadata.status,
+          createdAt: idx.metadata.createdAt,
+          ageInHours,
+          reason: 'zombie',
+        });
+      }
+      // Failed: in failed state
+      else if (cleanFailed && idx.metadata.status === 'failed') {
+        cleanable.push({
+          name: idx.name,
+          path: idx.metadata.rootPath,
+          status: idx.metadata.status,
+          createdAt: idx.metadata.createdAt,
+          ageInHours,
+          reason: 'failed',
+        });
+      }
+      // Stale: path no longer exists
+      else if (cleanStale && !pathExists) {
+        cleanable.push({
+          name: idx.name,
+          path: idx.metadata.rootPath,
+          status: idx.metadata.status,
+          createdAt: idx.metadata.createdAt,
+          ageInHours,
+          reason: 'stale',
+        });
+      }
+    }
+
+    // Count by reason
+    const zombiesFound = cleanable.filter(c => c.reason === 'zombie').length;
+    const failedFound = cleanable.filter(c => c.reason === 'failed').length;
+    const staleFound = cleanable.filter(c => c.reason === 'stale').length;
+
+    // Stop all running watchers
+    let watchersStopped = 0;
+    if (cleanWatchers) {
+      for (const watcher of runningWatchers) {
+        if (!options.dryRun) {
+          await manager.stop(watcher.indexName);
+        }
+        watchersStopped++;
+      }
+    }
+
+    if (cleanable.length === 0 && watchersStopped === 0) {
+      const message = 'Nothing to clean.';
       if (options.json) {
         return JSON.stringify({
           command: 'clean',
           message,
           data: {
             zombiesFound: 0,
+            failedFound: 0,
+            staleFound: 0,
+            watchersStopped: 0,
             deleted: 0,
-            zombies: [],
+            indexes: [],
           },
         });
       }
       return message;
     }
 
-    // Build zombie info list
-    const zombieInfo = zombies.map(z => ({
-      name: z.name,
-      createdAt: z.metadata.createdAt,
-      ageInHours: calculateAgeInHours(z.metadata.createdAt),
-    }));
-
     // Dry-run mode - show what would be deleted
     if (options.dryRun) {
-      const lines: string[] = [
-        `Found ${zombies.length} zombie index(es) stuck in "building" state:\n`,
-      ];
+      const lines: string[] = ['Would clean:\n'];
 
-      for (const info of zombieInfo) {
-        lines.push(`  ${info.name}`);
-        lines.push(`    Created: ${info.createdAt} (${info.ageInHours}h ago)`);
+      if (zombiesFound > 0) {
+        lines.push(`  Zombies (stuck building): ${zombiesFound}`);
+        for (const c of cleanable.filter(c => c.reason === 'zombie')) {
+          lines.push(`    - ${c.name} (${c.ageInHours}h old)`);
+        }
+      }
+      if (failedFound > 0) {
+        lines.push(`  Failed: ${failedFound}`);
+        for (const c of cleanable.filter(c => c.reason === 'failed')) {
+          lines.push(`    - ${c.name}`);
+        }
+      }
+      if (staleFound > 0) {
+        lines.push(`  Stale (path missing): ${staleFound}`);
+        for (const c of cleanable.filter(c => c.reason === 'stale')) {
+          lines.push(`    - ${c.name} (${c.path})`);
+        }
+      }
+      if (watchersStopped > 0) {
+        lines.push(`  Watchers to stop: ${watchersStopped}`);
       }
 
-      lines.push(
-        `\nWould delete ${zombies.length} index(es). Run without --dry-run to delete.`
-      );
+      lines.push(`\nRun without --dry-run to clean.`);
 
       const textOutput = lines.join('\n');
       if (options.json) {
@@ -116,46 +213,46 @@ export async function runCleanCommand(
           command: 'clean',
           message: textOutput,
           data: {
-            zombiesFound: zombies.length,
+            zombiesFound,
+            failedFound,
+            staleFound,
+            watchersStopped,
             deleted: 0,
-            zombies: zombieInfo,
+            indexes: cleanable,
           },
         });
       }
       return textOutput;
     }
 
-    // Delete mode (requires --force in production)
+    // Delete indexes
     let deleteCount = 0;
-    const deletedNames: string[] = [];
-
-    for (const zombie of zombies) {
-      const deleted = await deleteIndex(db, zombie.name);
+    for (const item of cleanable) {
+      const deleted = await deleteIndex(db, item.name);
       if (deleted) {
         deleteCount++;
-        deletedNames.push(zombie.name);
       }
     }
 
-    const lines: string[] = [`Deleted ${deleteCount} zombie index(es):\n`];
-
-    for (const info of zombieInfo) {
-      if (deletedNames.includes(info.name)) {
-        lines.push(`  ${info.name} (${info.ageInHours}h old)`);
-      }
-    }
+    const lines: string[] = ['Cleaned:\n'];
+    if (zombiesFound > 0) lines.push(`  Zombies deleted: ${cleanable.filter(c => c.reason === 'zombie').length}`);
+    if (failedFound > 0) lines.push(`  Failed deleted: ${cleanable.filter(c => c.reason === 'failed').length}`);
+    if (staleFound > 0) lines.push(`  Stale deleted: ${cleanable.filter(c => c.reason === 'stale').length}`);
+    if (watchersStopped > 0) lines.push(`  Watchers stopped: ${watchersStopped}`);
+    lines.push(`\nTotal: ${deleteCount} index(es) deleted, ${watchersStopped} watcher(s) stopped`);
 
     const textOutput = lines.join('\n');
     if (options.json) {
-      // Return clean JSON structure directly instead of using formatAsJson
-      // which doesn't have a handler for 'clean' command type
       return JSON.stringify({
         command: 'clean',
         message: textOutput,
         data: {
-          zombiesFound: zombies.length,
+          zombiesFound,
+          failedFound,
+          staleFound,
+          watchersStopped,
           deleted: deleteCount,
-          zombies: zombieInfo,
+          indexes: cleanable,
         },
       });
     }

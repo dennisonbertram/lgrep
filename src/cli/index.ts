@@ -416,14 +416,19 @@ program
     }
   });
 
-// Clean command - remove zombie indexes stuck in building state
+// Clean command - remove zombie, failed, and stale indexes
 program
   .command('clean')
-  .description('Remove zombie indexes stuck in "building" state')
+  .description('Clean up zombie, failed, and stale indexes')
   .option('-f, --force', 'Skip confirmation')
   .option('--dry-run', 'Show what would be deleted without deleting')
   .option('-j, --json', 'Output as JSON')
-  .action(async (options: { force?: boolean; dryRun?: boolean; json?: boolean }) => {
+  .option('--failed', 'Clean failed indexes')
+  .option('--stale', 'Clean indexes with missing paths')
+  .option('--zombies', 'Clean zombie indexes (stuck building)')
+  .option('--watchers', 'Stop orphaned watchers')
+  .option('-a, --all', 'Clean all types (default)')
+  .action(async (options: { force?: boolean; dryRun?: boolean; json?: boolean; failed?: boolean; stale?: boolean; zombies?: boolean; watchers?: boolean; all?: boolean }) => {
     try {
       const output = await runCleanCommand(options);
       console.log(output);
