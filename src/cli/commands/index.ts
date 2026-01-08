@@ -1,4 +1,4 @@
-import { basename, resolve, extname, dirname, join } from 'node:path';
+import { basename, resolve, dirname, join } from 'node:path';
 import { access, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { walkFiles, type WalkResult } from '../../core/walker.js';
@@ -115,6 +115,7 @@ export async function runIndexCommand(
     const dbPath = getDbPath();
     const cachePath = getCachePath();
     const db = await openDatabase(dbPath);
+    spinner?.update('Opening embedding cache...');
     const cache = await openEmbeddingCache(cachePath);
 
     // Declare handle outside try block so it's accessible in catch for failure marking
@@ -201,7 +202,7 @@ export async function runIndexCommand(
       const currentFilePaths = new Set(files.map(f => f.absolutePath));
 
       // Accumulate chunks for batched writes
-      let pendingChunks: DocumentChunk[] = [];
+      const pendingChunks: DocumentChunk[] = [];
 
       // Track file metadata for batch upsert
       const fileMetadataMap = new Map<string, { hash: string; chunkCount: number }>();
@@ -226,214 +227,309 @@ export async function runIndexCommand(
         }
       }
 
-      // First pass: count total chunks to embed for progress tracking
-      spinner?.update('Counting chunks...');
-      let totalChunksToEmbed = 0;
-      const fileChunkCounts = new Map<string, number>();
-
-      for (const file of files) {
-        // Read file to compute hash
-        const content = await readFile(file.absolutePath, 'utf-8');
-        const currentHash = hashContent(content);
-        const existingHash = existingHashes.get(file.absolutePath);
-
-        // Check if file has changed
-        if (mode === 'update' && existingHash === currentHash) {
-          continue;
-        }
-
-        // Count chunks for this file
-        const textChunks = chunkText(content, {
-          maxTokens: config.chunkSize,
-          overlapTokens: config.chunkOverlap,
-        });
-
-        fileChunkCounts.set(file.absolutePath, textChunks.length);
-        totalChunksToEmbed += textChunks.length;
-      }
-
-      // Progress tracking state
-      let embeddedChunks = 0;
-      let embeddingStartTime = 0;
-      let tipShown = false;
-      const isUsingOllama = config.model.startsWith('ollama:');
-
-      // Progress callback for processFile
-      const onProgress = (chunksProcessed: number) => {
-        if (!spinner || options.json) return;
-
-        embeddedChunks += chunksProcessed;
-
-        if (embeddingStartTime === 0) {
-          embeddingStartTime = Date.now();
-        }
-
-        const elapsedMs = Date.now() - embeddingStartTime;
-        const elapsedSec = elapsedMs / 1000;
-        const percentage = ((embeddedChunks / totalChunksToEmbed) * 100).toFixed(1);
-
-        // Calculate ETA
-        let etaStr = '';
-        if (embeddedChunks > 0) {
-          const avgTimePerChunk = elapsedMs / embeddedChunks;
-          const remainingChunks = totalChunksToEmbed - embeddedChunks;
-          const etaMs = avgTimePerChunk * remainingChunks;
-
-          if (etaMs > 60000) {
-            const minutes = Math.floor(etaMs / 60000);
-            const seconds = Math.floor((etaMs % 60000) / 1000);
-            etaStr = ` - ETA: ${minutes}m ${seconds}s`;
-          } else if (etaMs > 1000) {
-            const seconds = Math.floor(etaMs / 1000);
-            etaStr = ` - ETA: ${seconds}s`;
-          }
-        }
-
-        spinner.update(
-          `Embedding chunks ${embeddedChunks}/${totalChunksToEmbed} (${percentage}%)${etaStr}`
-        );
-
-        // Show tip after 30 seconds for Ollama users
-        if (!tipShown && isUsingOllama && elapsedSec > 30 && !options.json) {
-          console.log('\n💡 Tip: Set OPENAI_API_KEY for 10-100x faster indexing');
-          tipShown = true;
-        }
-      };
-
-      // Process files
+      // Process files in parallel batches
       let processedFiles = 0;
-      for (const file of files) {
-        processedFiles++;
-        spinner?.update(
-          `Processing files (${processedFiles}/${files.length}): ${file.relativePath}`
+      const parallelLimit = config.parallelFiles ?? 10;
+      const embedBatchSize = config.embedBatchSize ?? 10;
+      const dbBatchSize = config.dbBatchSize ?? 250;
+      
+      // Skip cache for fresh indexes (mode='create') - cache won't have any hits anyway
+      const skipCache = mode === 'create' && !options.retry;
+
+      // Process files in batches for parallel execution
+      for (let batchStart = 0; batchStart < files.length; batchStart += parallelLimit) {
+        const fileBatch = files.slice(batchStart, batchStart + parallelLimit);
+
+        // Phase 1: Read files and compute hashes in parallel
+        const fileDataResults = await Promise.all(
+          fileBatch.map(async (file) => {
+            const content = await readFile(file.absolutePath, 'utf-8');
+            const currentHash = hashContent(content);
+            const existingHash = existingHashes.get(file.absolutePath);
+            return { file, content, currentHash, existingHash };
+          })
         );
 
-        // Read file to compute hash
-        const content = await readFile(file.absolutePath, 'utf-8');
-        const currentHash = hashContent(content);
-        const existingHash = existingHashes.get(file.absolutePath);
+        // Filter files that need processing and handle updates
+        const filesToProcess: Array<{
+          file: WalkResult;
+          content: string;
+          currentHash: string;
+        }> = [];
 
-        // Check if file has changed
-        if (mode === 'update' && existingHash === currentHash) {
-          // File unchanged - skip it
-          filesSkipped++;
-          continue;
+        for (const { file, content, currentHash, existingHash } of fileDataResults) {
+          // Check if file has changed
+          if (mode === 'update' && existingHash === currentHash) {
+            filesSkipped++;
+            continue;
+          }
+
+          // File is new or changed
+          if (mode === 'update' && existingHash) {
+            await deleteChunksByFilePath(db, handle, file.absolutePath);
+            filesUpdated++;
+          } else if (mode === 'update') {
+            filesAdded++;
+          }
+
+          filesToProcess.push({ file, content, currentHash });
         }
 
-        // File is new or changed
-        if (mode === 'update' && existingHash) {
-          // File changed - delete old chunks first
-          await deleteChunksByFilePath(db, handle, file.absolutePath);
-          filesUpdated++;
-        } else if (mode === 'update') {
-          // New file in update mode
-          filesAdded++;
-        }
+        // Phase 2: Chunk files in parallel
+        const chunkingResults = await Promise.all(
+          filesToProcess.map(async ({ file, content, currentHash }) => {
+            const contentHash = hashContent(content);
+            const fileType = file.extension;
 
-        // Process the file
-        const chunks = await processFile(
-          file,
-          embedClient,
-          cache,
-          config.chunkSize,
-          config.chunkOverlap,
-          config.embedBatchSize,
-          onProgress
+            const textChunks = chunkText(content, {
+              maxTokens: config.chunkSize,
+              overlapTokens: config.chunkOverlap,
+            });
+
+            return {
+              file,
+              content,
+              currentHash,
+              contentHash,
+              fileType,
+              textChunks,
+            };
+          })
         );
 
-        // Accumulate chunks and flush in batches
-        if (chunks.length > 0) {
-          pendingChunks.push(...chunks);
+        // Phase 3: Check cache for embeddings and collect uncached chunks
+        type UncachedChunk = {
+          chunkContent: string;
+          fileIndex: number;
+          chunkIndex: number;
+          textChunk: { index: number; startLine: number; endLine: number };
+        };
 
-          // Track file metadata for later upsert
-          fileMetadataMap.set(file.absolutePath, {
-            hash: currentHash,
-            chunkCount: chunks.length,
-          });
+        const cachedDocumentChunks: Map<number, DocumentChunk[]> = new Map();
 
-          // Flush when we reach the batch threshold
-          while (pendingChunks.length >= config.dbBatchSize) {
-            const batch = pendingChunks.splice(0, config.dbBatchSize);
-            await addChunks(db, handle, batch);
-            totalChunks += batch.length;
+        // Initialize doc chunk arrays for each file
+        for (let fileIndex = 0; fileIndex < chunkingResults.length; fileIndex++) {
+          const result = chunkingResults[fileIndex];
+          if (result) {
+            cachedDocumentChunks.set(fileIndex, new Array(result.textChunks.length));
           }
         }
 
-        // Extract code intelligence for JS/TS/Solidity and tree-sitter supported files
-        if (ALL_CODE_EXTENSIONS.includes(file.extension)) {
-          try {
-            // Extract symbols
-            const rawSymbols = await extractSymbols(
-              content,
-              file.absolutePath,
-              file.relativePath,
-              file.extension
-            );
-            const symbols = convertSymbols(
-              rawSymbols,
-              file.absolutePath,
-              file.relativePath,
-              content
-            );
-            await addSymbols(db, indexName, symbols);
-            totalSymbols += symbols.length;
+        // Check cache sequentially per file (to avoid overwhelming SQLite)
+        // Skip cache entirely for fresh indexes (huge speedup - cache is slow)
+        const uncachedPerFile = await Promise.all(
+          chunkingResults.map(async (result, fileIndex) => {
+            const fileUncached: UncachedChunk[] = [];
+            const docChunks = cachedDocumentChunks.get(fileIndex);
+            if (!docChunks) return fileUncached;
 
-            // Summarize symbols immediately if enabled
-            // This happens while file content is still in memory
-            if (summarizer && symbols.length > 0) {
-              for (const symbol of symbols) {
-                // Skip if already has summary (unless resummarize)
-                if (symbol.summary && !options.resummarize) continue;
+            for (let chunkIndex = 0; chunkIndex < result.textChunks.length; chunkIndex++) {
+              const textChunk = result.textChunks[chunkIndex];
+              if (!textChunk) continue;
 
-                // Skip symbols without meaningful code (imports, exports)
-                if (symbol.kind === 'import' || symbol.kind === 'export') continue;
+              // Skip slow cache lookups for fresh indexes
+              if (skipCache) {
+                fileUncached.push({
+                  chunkContent: textChunk.content,
+                  fileIndex,
+                  chunkIndex,
+                  textChunk,
+                });
+                continue;
+              }
 
-                try {
-                  // Get the code for this symbol from the file
-                  const code = getSymbolCode(content, symbol);
+              const cached = await getEmbedding(cache, embedClient.model, textChunk.content);
 
-                  const summary = await summarizer.summarizeSymbol({
-                    name: symbol.name,
-                    kind: symbol.kind,
-                    signature: symbol.signature,
-                    documentation: symbol.documentation,
-                    code,
-                  });
-
-                  await updateSymbolSummary(
-                    db,
-                    indexName,
-                    symbol.id,
-                    summary,
-                    config.summarizationModel
-                  );
-
-                  totalSymbolsSummarized++;
-                } catch (error) {
-                  // Log but don't fail indexing
-                  if (showProgress && !options.json) {
-                    console.warn(`⚠ Failed to summarize ${symbol.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                  }
-                }
+              if (cached) {
+                docChunks[chunkIndex] = {
+                  id: randomUUID(),
+                  filePath: result.file.absolutePath,
+                  relativePath: result.file.relativePath,
+                  contentHash: result.contentHash,
+                  chunkIndex: textChunk.index,
+                  content: textChunk.content,
+                  vector: cached,
+                  lineStart: textChunk.startLine,
+                  lineEnd: textChunk.endLine,
+                  fileType: result.fileType,
+                  createdAt: new Date().toISOString(),
+                };
+              } else {
+                fileUncached.push({
+                  chunkContent: textChunk.content,
+                  fileIndex,
+                  chunkIndex,
+                  textChunk,
+                });
               }
             }
 
-            // Extract dependencies
-            const rawDeps = await extractDependencies(content, file.absolutePath);
-            const deps = convertDependencies(rawDeps, file.absolutePath);
-            await addDependencies(db, indexName, deps);
-            totalDependencies += deps.length;
+            return fileUncached;
+          })
+        );
 
-            // Extract calls
-            const rawCalls = await extractCalls(content, file.absolutePath);
-            const calls = convertCalls(rawCalls, file.absolutePath, file.relativePath);
-            await addCalls(db, indexName, calls);
-            totalCalls += calls.length;
-          } catch (error) {
-            // Gracefully handle code intelligence extraction errors
-            // Don't fail the entire indexing if AST parsing fails
+        // Flatten all uncached chunks
+        const uncachedChunks = uncachedPerFile.flat();
+
+        // Phase 4: Batch embed uncached chunks across all files in this batch
+        for (let i = 0; i < uncachedChunks.length; i += embedBatchSize) {
+          const embedBatch = uncachedChunks.slice(i, i + embedBatchSize);
+          const contents = embedBatch.map((c) => c.chunkContent);
+
+          // Generate embeddings for the batch
+          const embedResult = await embedClient.embed(contents);
+
+          // Store results and cache
+          for (let j = 0; j < embedBatch.length; j++) {
+            const item = embedBatch[j];
+            if (!item) continue;
+
+            const embedding = embedResult.embeddings[j];
+            if (!embedding) {
+              throw new Error(`Failed to generate embedding for chunk`);
+            }
+
+            const vector = new Float32Array(embedding);
+            const chunkingResult = chunkingResults[item.fileIndex];
+            if (!chunkingResult) continue;
+
+            // Cache the embedding
+            await setEmbedding(cache, embedClient.model, item.chunkContent, vector);
+
+            // Store the document chunk
+            const docChunks = cachedDocumentChunks.get(item.fileIndex);
+            if (docChunks) {
+              docChunks[item.chunkIndex] = {
+                id: randomUUID(),
+                filePath: chunkingResult.file.absolutePath,
+                relativePath: chunkingResult.file.relativePath,
+                contentHash: chunkingResult.contentHash,
+                chunkIndex: item.textChunk.index,
+                content: item.chunkContent,
+                vector,
+                lineStart: item.textChunk.startLine,
+                lineEnd: item.textChunk.endLine,
+                fileType: chunkingResult.fileType,
+                createdAt: new Date().toISOString(),
+              };
+            }
           }
         }
+
+        // Phase 5: Collect all chunks from this batch and add to pending
+        for (let fileIndex = 0; fileIndex < chunkingResults.length; fileIndex++) {
+          const result = chunkingResults[fileIndex];
+          if (!result) continue;
+
+          const docChunks = cachedDocumentChunks.get(fileIndex);
+          if (!docChunks) continue;
+
+          const validChunks = docChunks.filter((c): c is DocumentChunk => c !== undefined);
+
+          if (validChunks.length > 0) {
+            pendingChunks.push(...validChunks);
+
+            fileMetadataMap.set(result.file.absolutePath, {
+              hash: result.currentHash,
+              chunkCount: validChunks.length,
+            });
+
+            // Flush when we reach the batch threshold
+            while (pendingChunks.length >= dbBatchSize) {
+              const batch = pendingChunks.splice(0, dbBatchSize);
+              await addChunks(db, handle, batch);
+              totalChunks += batch.length;
+            }
+          }
+        }
+
+        // Phase 6: Extract code intelligence in parallel for this batch
+        // Return counts from each file to avoid race conditions
+        const codeIntelResults = await Promise.all(
+          chunkingResults.map(async (result) => {
+            const counts = { symbols: 0, deps: 0, calls: 0, summarized: 0 };
+            if (!ALL_CODE_EXTENSIONS.includes(result.file.extension)) return counts;
+
+            try {
+              // Extract symbols
+              const rawSymbols = await extractSymbols(
+                result.content,
+                result.file.absolutePath,
+                result.file.relativePath,
+                result.file.extension
+              );
+              const symbols = convertSymbols(
+                rawSymbols,
+                result.file.absolutePath,
+                result.file.relativePath,
+                result.content
+              );
+              await addSymbols(db, indexName, symbols);
+              counts.symbols = symbols.length;
+
+              // Summarize symbols if enabled
+              if (summarizer && symbols.length > 0) {
+                for (const symbol of symbols) {
+                  if (symbol.summary && !options.resummarize) continue;
+                  if (symbol.kind === 'import' || symbol.kind === 'export') continue;
+
+                  try {
+                    const code = getSymbolCode(result.content, symbol);
+                    const summary = await summarizer.summarizeSymbol({
+                      name: symbol.name,
+                      kind: symbol.kind,
+                      signature: symbol.signature,
+                      documentation: symbol.documentation,
+                      code,
+                    });
+
+                    await updateSymbolSummary(
+                      db,
+                      indexName,
+                      symbol.id,
+                      summary,
+                      config.summarizationModel
+                    );
+
+                    counts.summarized++;
+                  } catch {
+                    // Log but don't fail indexing
+                  }
+                }
+              }
+
+              // Extract dependencies
+              const rawDeps = await extractDependencies(result.content, result.file.absolutePath);
+              const deps = convertDependencies(rawDeps, result.file.absolutePath);
+              await addDependencies(db, indexName, deps);
+              counts.deps = deps.length;
+
+              // Extract calls
+              const rawCalls = await extractCalls(result.content, result.file.absolutePath);
+              const calls = convertCalls(rawCalls, result.file.absolutePath, result.file.relativePath);
+              await addCalls(db, indexName, calls);
+              counts.calls = calls.length;
+            } catch {
+              // Gracefully handle code intelligence extraction errors
+            }
+
+            return counts;
+          })
+        );
+
+        // Aggregate counts from parallel extraction
+        for (const counts of codeIntelResults) {
+          totalSymbols += counts.symbols;
+          totalDependencies += counts.deps;
+          totalCalls += counts.calls;
+          totalSymbolsSummarized += counts.summarized;
+        }
+
+        // Update progress for batch
+        processedFiles += fileBatch.length;
+        spinner?.update(
+          `Processing files (${processedFiles}/${files.length})`
+        );
       }
 
       // Flush any remaining chunks after all files are processed
@@ -760,108 +856,3 @@ function getSymbolCode(
   return lines.slice(startLine, endLine + 1).join('\n');
 }
 
-/**
- * Process a single file: read, chunk, embed.
- */
-async function processFile(
-  file: WalkResult,
-  embedClient: Awaited<ReturnType<typeof createEmbeddingClient>>,
-  cache: Awaited<ReturnType<typeof openEmbeddingCache>>,
-  chunkSize: number,
-  chunkOverlap: number,
-  embedBatchSize: number,
-  onProgress?: (chunksProcessed: number) => void
-): Promise<DocumentChunk[]> {
-  // Read file content
-  const content = await readFile(file.absolutePath, 'utf-8');
-  const contentHash = hashContent(content);
-  const fileType = file.extension;
-
-  // Chunk the content
-  const textChunks = chunkText(content, {
-    maxTokens: chunkSize,
-    overlapTokens: chunkOverlap,
-  });
-
-  // Pre-allocate document chunks array
-  const documentChunks: DocumentChunk[] = new Array(textChunks.length);
-
-  // Separate cached and uncached chunks
-  const uncachedChunks: Array<{ chunk: typeof textChunks[0]; index: number }> = [];
-
-  for (let i = 0; i < textChunks.length; i++) {
-    const chunk = textChunks[i];
-    if (!chunk) continue;
-
-    const cached = await getEmbedding(cache, embedClient.model, chunk.content);
-
-    if (cached) {
-      // Use cached vector
-      documentChunks[i] = {
-        id: randomUUID(),
-        filePath: file.absolutePath,
-        relativePath: file.relativePath,
-        contentHash,
-        chunkIndex: chunk.index,
-        content: chunk.content,
-        vector: cached,
-        lineStart: chunk.startLine,
-        lineEnd: chunk.endLine,
-        fileType,
-        createdAt: new Date().toISOString(),
-      };
-    } else {
-      uncachedChunks.push({ chunk, index: i });
-    }
-  }
-
-  // Batch embed uncached chunks
-  for (let i = 0; i < uncachedChunks.length; i += embedBatchSize) {
-    const batch = uncachedChunks.slice(i, i + embedBatchSize);
-    const contents = batch.map((b) => b.chunk.content);
-
-    // Generate embeddings for the batch
-    const result = await embedClient.embed(contents);
-
-    for (let j = 0; j < batch.length; j++) {
-      const batchItem = batch[j];
-      if (!batchItem) continue;
-
-      const embedding = result.embeddings[j];
-      if (!embedding) {
-        throw new Error(
-          `Failed to generate embedding for chunk ${batchItem.chunk.index}`
-        );
-      }
-      const vector = new Float32Array(embedding);
-
-      // Cache the embedding
-      await setEmbedding(
-        cache,
-        embedClient.model,
-        batchItem.chunk.content,
-        vector
-      );
-
-      // Store the document chunk
-      documentChunks[batchItem.index] = {
-        id: randomUUID(),
-        filePath: file.absolutePath,
-        relativePath: file.relativePath,
-        contentHash,
-        chunkIndex: batchItem.chunk.index,
-        content: batchItem.chunk.content,
-        vector,
-        lineStart: batchItem.chunk.startLine,
-        lineEnd: batchItem.chunk.endLine,
-        fileType,
-        createdAt: new Date().toISOString(),
-      };
-    }
-
-    // Report progress after processing this batch
-    onProgress?.(batch.length);
-  }
-
-  return documentChunks;
-}

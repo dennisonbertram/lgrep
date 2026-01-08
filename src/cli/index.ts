@@ -1051,14 +1051,14 @@ program
   .description('Install lgrep integration with Claude Code')
   .option('--skip-skill', 'Do not create the skill')
   .option('--skip-hook', 'Do not add SessionStart hook')
-  .option('--skip-claude-md', 'Do not update ~/.claude/CLAUDE.md')
-  .option('--add-to-project', 'Also add lgrep instructions to project CLAUDE.md')
+  .option('--add-to-claude-md', 'Also add lgrep section to ~/.claude/CLAUDE.md')
+  .option('--add-to-project', 'Also add lgrep section to project CLAUDE.md')
   .option('-y, --yes', 'Skip confirmation prompts')
   .option('-j, --json', 'Output as JSON')
   .action(async (options: {
     skipSkill?: boolean;
     skipHook?: boolean;
-    skipClaudeMd?: boolean;
+    addToClaudeMd?: boolean;
     addToProject?: boolean;
     yes?: boolean;
     json?: boolean;
@@ -1067,7 +1067,7 @@ program
       const result = await runInstallCommand({
         skipSkill: options.skipSkill,
         skipHook: options.skipHook,
-        skipClaudeMd: options.skipClaudeMd,
+        addToClaudeMd: options.addToClaudeMd,
         addToProject: options.addToProject,
         yes: options.yes,
         json: options.json,
@@ -1102,7 +1102,7 @@ program
         }
       }
 
-      if (!options.skipClaudeMd) {
+      if (options.addToClaudeMd) {
         if (result.userClaudeMdUpdated) {
           console.log(`  ✓ CLAUDE.md updated at ${result.userClaudeMdPath}`);
         } else if (result.userClaudeMdAlreadyHasLgrep) {

@@ -2,37 +2,50 @@
 
 Local semantic code search CLI - AI-powered grep with embeddings.
 
+**Why lgrep?** Traditional grep finds text patterns, but lgrep understands code. Search for "authentication logic" and find OAuth handlers, JWT validation, and session management—even if those words never appear in the code. Plus built-in code intelligence: find dead code, circular dependencies, and see the blast radius before refactoring. Works locally with Ollama or blazing fast with cloud APIs.
+
+## Prerequisites
+
+lgrep requires an embedding provider. Choose one:
+
+| Provider | Setup | Speed | Cost |
+|----------|-------|-------|------|
+| **OpenAI** (recommended) | `export OPENAI_API_KEY=sk-...` | ~50ms | ~$0.02/1M tokens |
+| **Voyage** (best for code) | `export VOYAGE_API_KEY=...` | ~100ms | ~$0.06/1M tokens |
+| **Cohere** | `export COHERE_API_KEY=...` | ~50ms | ~$0.10/1M tokens |
+| **Ollama** (local/free) | `lgrep setup` | ~1-5s | Free (downloads ~2GB) |
+
+**Without one of these configured, indexing will fail.**
+
+> **Note:** `lgrep setup` auto-installs Ollama and downloads the required AI models (~2GB). This is the easiest option if you don't have API keys.
+
+## Installation
+
 ```bash
+# 1. Install lgrep
 npm install -g lgrep
+
+# 2. Configure embedding provider (choose one):
+
+# Option A: Use OpenAI (fast, recommended)
+export OPENAI_API_KEY=sk-...
+
+# Option B: Use local Ollama (private, free, slower)
+lgrep setup   # Downloads Ollama + ~2GB of models
+
+# 3. Verify setup
+lgrep doctor
 ```
-
-## Features
-
-- **Semantic Search** - Find code by meaning, not just text matching
-- **Auto-Detection** - Automatically detects the right index from your current directory
-- **Multi-Provider AI** - Embeddings: OpenAI, Cohere, Voyage, Ollama | LLM: Groq, Anthropic, OpenAI, Ollama
-- **Code Intelligence** - Understands symbols, calls, and dependencies
-- **Privacy-First** - Run completely locally with Ollama
-- **Fast** - LanceDB vector storage, incremental indexing
-- **Watch Mode** - Auto-update indexes on file changes
-- **Natural Language Intent** - `lgrep intent "<prompt>"` routes casual queries to the right code-intel command
-- **High-Impact Code Intelligence** - Built-in `dead`, `similar`, `cycles`, `unused-exports`, `breaking`, and `rename` helpers
 
 ## Quick Start
 
 ```bash
-# Setup Ollama (local, private)
-lgrep setup
-
 # Index your project
 lgrep index ./my-project
 
-# Search semantically (auto-detects index from current directory)
+# Search semantically
 cd my-project
 lgrep search "user authentication logic"
-
-# Or specify index explicitly
-lgrep search "user authentication logic" --index my-project
 
 # Find symbol usages
 lgrep search --usages "validateUser"
@@ -44,28 +57,30 @@ lgrep search --definition "UserService"
 lgrep context "add rate limiting to the API"
 ```
 
-## Installation
+## Claude Code Integration
+
+Install lgrep as a Claude Code skill:
 
 ```bash
-npm install -g lgrep
+lgrep install
 ```
 
-### Requirements
+This adds:
+- **Skill** - Claude learns when/how to use lgrep automatically
+- **SessionStart hook** - Auto-indexes repos when you open them in Claude Code
 
-- Node.js >= 18.17
-- [Ollama](https://ollama.ai) (for local mode) or API key for cloud providers
+After installation, Claude will use lgrep for semantic search, code intelligence, and context building.
 
-### Setup Local Mode (Ollama)
+## Features
 
-```bash
-# Install Ollama from https://ollama.ai
-# Then run setup:
-lgrep setup
-```
-
-This pulls the required models:
-- `mxbai-embed-large` - For embeddings
-- `llama3.2:3b` - For code summarization
+- **Semantic Search** - Find code by meaning, not just text matching
+- **Code Intelligence** - Understands symbols, calls, and dependencies
+- **Multi-Provider** - OpenAI, Cohere, Voyage, or local Ollama
+- **Privacy-First** - Run completely locally with Ollama
+- **Fast** - LanceDB vector storage, parallel processing, incremental indexing
+- **Watch Mode** - Auto-update indexes on file changes
+- **Natural Language** - `lgrep intent "<prompt>"` routes queries to the right command
+- **Refactoring Tools** - Dead code, circular deps, unused exports, impact analysis
 
 ## Commands
 
@@ -122,6 +137,9 @@ The following commands run against the same auto-detected index and re-use the c
 | `lgrep unused-exports` | Flag exported symbols that are never imported |
 | `lgrep breaking` | Surface calls whose argument count no longer matches the signature |
 | `lgrep rename <old> <new>` | Preview every reference that would change if you rename a symbol |
+| `lgrep callers <symbol>` | Show all locations that call a given function/method |
+| `lgrep deps <module>` | Show what modules import/depend on a given module |
+| `lgrep impact <symbol>` | Show blast radius if you change a function (direct + transitive callers) |
 
 Each command supports `-i, --index`, `-l, --limit`, and `-j, --json` (when applicable) so you can script them like the existing CLI commands.
 
@@ -241,13 +259,44 @@ lgrep explain authenticateUser   # Explain a symbol
 lgrep explain validateToken -m groq:llama-3.3-70b  # Use specific model
 ```
 
-### `lgrep watch <index-name>`
+### `lgrep install`
+
+Install lgrep integration with Claude Code.
+
+```bash
+lgrep install                  # Install skill + SessionStart hook
+lgrep install --skip-hook      # Skip SessionStart hook (skill only)
+lgrep install --add-to-claude-md  # Also add to ~/.claude/CLAUDE.md (optional)
+lgrep install --add-to-project    # Also add to project CLAUDE.md (optional)
+```
+
+### `lgrep analyze <path>`
+
+Analyze code structure without indexing. Useful for one-off analysis.
+
+```bash
+lgrep analyze ./src                    # Analyze directory
+lgrep analyze ./src --symbols          # List all symbols
+lgrep analyze ./src --deps             # Show dependency graph
+lgrep analyze ./src --calls            # Show call graph
+lgrep analyze ./src --file auth.ts     # Analyze single file
+```
+
+### `lgrep watch <path>`
 
 Watch for file changes and update index automatically.
 
 ```bash
-lgrep watch my-project         # Start watching
-lgrep watch my-project --stop  # Stop watching
+lgrep watch .                  # Start watching current directory
+lgrep watch ./src --name proj  # Watch with custom index name
+```
+
+### `lgrep stop <index-name>`
+
+Stop a running watcher.
+
+```bash
+lgrep stop my-project          # Stop watching
 ```
 
 ### `lgrep delete <index-name>`
@@ -366,7 +415,12 @@ const response = await provider.generateText('Explain this code...');
 
 ## Configuration
 
-Configuration is stored in `~/.lgrep/config.json`:
+Configuration is stored in a platform-specific location:
+- **macOS**: `~/Library/Application Support/lgrep/config.json`
+- **Linux**: `~/.config/lgrep/config.json` (or `$XDG_CONFIG_HOME/lgrep/`)
+- **Windows**: `%APPDATA%\lgrep\config.json`
+
+Override with `LGREP_HOME` environment variable.
 
 ```json
 {
@@ -374,7 +428,8 @@ Configuration is stored in `~/.lgrep/config.json`:
   "summarizationModel": "auto",
   "ollamaHost": "http://localhost:11434",
   "embedBatchSize": 10,
-  "dbBatchSize": 250
+  "dbBatchSize": 250,
+  "parallelFiles": 10
 }
 ```
 
@@ -398,6 +453,8 @@ ANTHROPIC_API_KEY   # Anthropic API key (LLM only)
 
 Optimized for large codebases:
 
+- **Parallel file processing** - 10 files processed concurrently (configurable)
+- **Cross-file embedding batching** - Batches chunks across multiple files
 - **Batched embeddings** - 10 chunks per API call
 - **Batched DB writes** - 250 chunks per flush
 - **Incremental indexing** - Only reprocess changed files
@@ -408,16 +465,6 @@ Optimized for large codebases:
 | 1,000 files | ~150MB | ~2 min |
 | 5,000 files | ~200MB | ~10 min |
 | 10,000 files | ~300MB | ~20 min |
-
-## Integration with Claude Code
-
-lgrep works great with Claude Code for AI-assisted development:
-
-```bash
-# In Claude Code, lgrep auto-detects ANTHROPIC_API_KEY
-lgrep index .
-lgrep context "implement feature X" --suggest
-```
 
 ## License
 
@@ -433,3 +480,8 @@ cd lgrep
 npm install
 npm test
 ```
+
+## Authors
+
+- **Dennison Bertram** ([@dennisonbertram](https://github.com/dennisonbertram)) - Creator
+- **Claude** (Anthropic) - AI pair programmer
