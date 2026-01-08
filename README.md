@@ -307,6 +307,19 @@ Delete an index.
 lgrep delete my-project
 ```
 
+### `lgrep clean`
+
+Clean up failed, stale, and zombie indexes.
+
+```bash
+lgrep clean --dry-run    # Preview what would be cleaned
+lgrep clean              # Clean all (zombies, failed, stale, stop watchers)
+lgrep clean --failed     # Only failed indexes
+lgrep clean --stale      # Only indexes with missing paths
+lgrep clean --zombies    # Only stuck-building indexes
+lgrep clean --watchers   # Stop all running watchers
+```
+
 ### `lgrep config`
 
 Manage configuration.

@@ -60,6 +60,8 @@ lgrep list
 | `lgrep callers <symbol>` | Find all callers of a function |
 | `lgrep deps <file>` | Show file dependencies |
 | `lgrep impact <symbol>` | Analyze change impact |
+| `lgrep clean` | Remove failed/stale/zombie indexes |
+| `lgrep stop <name>` | Stop a running watcher |
 
 ### Embedding Providers
 
