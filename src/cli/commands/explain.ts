@@ -1,8 +1,8 @@
 import { basename } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { openDatabase, getIndex } from '../../storage/lance.js';
-import { getDbPath } from '../utils/paths.js';
+import { getIndex } from '../../storage/lance.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 import { searchSymbols, getCalls, getDependencies } from '../../storage/code-intel.js';
 import { createAIProvider, detectBestProvider } from '../../core/ai-provider.js';
@@ -154,8 +154,7 @@ export async function runExplainCommand(
 
     if (indexName) {
       try {
-        const dbPath = getDbPath();
-        const db = await openDatabase(dbPath);
+        const db = await openConfiguredDatabase();
         const handle = await getIndex(db, indexName);
         if (handle) {
           const allSymbols = await searchSymbols(db, indexName, basename(target));
@@ -190,8 +189,7 @@ export async function runExplainCommand(
       indexName = detected ?? basename(process.cwd());
     }
 
-    const dbPath = getDbPath();
-    const db = await openDatabase(dbPath);
+    const db = await openConfiguredDatabase();
 
     try {
       const handle = await getIndex(db, indexName);

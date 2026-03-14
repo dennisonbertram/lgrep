@@ -1,6 +1,10 @@
 import { existsSync } from 'node:fs';
-import { openDatabase, listIndexes, deleteIndex } from '../../storage/lance.js';
-import { getDbPath } from '../utils/paths.js';
+import { listIndexes, deleteIndex } from '../../storage/lance.js';
+import {
+  openConfiguredDatabase,
+  getConfiguredDatabaseLocationSync,
+  resolveDatabaseSettingsSync,
+} from '../../storage/database-config.js';
 import { DaemonManager } from '../../daemon/manager.js';
 
 /**
@@ -65,7 +69,8 @@ function calculateAgeInHours(createdAt: string): number {
 export async function runCleanCommand(
   options: CleanOptions = {}
 ): Promise<string> {
-  const dbPath = getDbPath();
+  const settings = resolveDatabaseSettingsSync();
+  const dbPath = getConfiguredDatabaseLocationSync();
 
   // If no specific type given, clean all
   const cleanAll = options.all || (!options.failed && !options.stale && !options.zombies && !options.watchers);
@@ -74,7 +79,7 @@ export async function runCleanCommand(
   const cleanZombies = cleanAll || options.zombies;
   const cleanWatchers = cleanAll || options.watchers;
 
-  if (!existsSync(dbPath)) {
+  if (settings.mode === 'local' && !existsSync(dbPath)) {
     const message = 'No indexes found to clean.';
     if (options.json) {
       return JSON.stringify({
@@ -93,7 +98,7 @@ export async function runCleanCommand(
     return message;
   }
 
-  const db = await openDatabase(dbPath);
+  const db = await openConfiguredDatabase();
   const manager = new DaemonManager();
 
   try {

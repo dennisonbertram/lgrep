@@ -6,9 +6,9 @@ import { chunkText } from '../../core/chunker.js';
 import { createEmbeddingClient } from '../../core/embeddings.js';
 import { hashContent } from '../../core/hash.js';
 import { loadConfig } from '../../storage/config.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { ALL_CODE_EXTENSIONS } from '../../core/ast/languages.js';
 import {
-  openDatabase,
   createIndex,
   getIndex,
   addChunks,
@@ -27,7 +27,7 @@ import {
   getEmbedding,
   setEmbedding,
 } from '../../storage/cache.js';
-import { getDbPath, getCachePath } from '../utils/paths.js';
+import { getCachePath } from '../utils/paths.js';
 import { createSpinner } from '../utils/progress.js';
 import { extractSymbols } from '../../core/ast/symbol-extractor.js';
 import { extractDependencies } from '../../core/ast/dependency-extractor.js';
@@ -113,11 +113,14 @@ export async function runIndexCommand(
 
     // Open database and cache
     spinner?.update('Opening database...');
-    const dbPath = getDbPath();
     const cachePath = getCachePath();
-    const db = await openDatabase(dbPath);
+    const db = await openConfiguredDatabase();
     spinner?.update('Opening embedding cache...');
-    const cache = await openEmbeddingCache(cachePath);
+    const cache = await openEmbeddingCache(cachePath, {
+      enabled: config.cacheEnabled,
+      maxEntries: config.cacheMaxEntries,
+      ttlHours: config.cacheTtlHours,
+    });
 
     // Declare handle outside try block so it's accessible in catch for failure marking
     let handle: Awaited<ReturnType<typeof getIndex>> | Awaited<ReturnType<typeof createIndex>> | undefined;
@@ -864,4 +867,3 @@ function getSymbolCode(
 
   return lines.slice(startLine, endLine + 1).join('\n');
 }
-

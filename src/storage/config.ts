@@ -62,6 +62,30 @@ export interface LgrepConfig {
   dbBatchSize: number;
   /** Number of files to process in parallel */
   parallelFiles: number;
+  /** Storage backend for generated index data */
+  storageMode: 'local' | 's3';
+  /** Remote database URI for S3-compatible backends */
+  storageUri: string;
+  /** Optional S3-compatible endpoint override (required for Cloudflare R2) */
+  storageEndpoint: string;
+  /** Region for remote storage connections */
+  storageRegion: string;
+  /** Where remote storage credentials should be resolved from */
+  storageCredentialSource: 'auto' | 'env' | 'keychain';
+  /** Named credential profile for local machine credential stores */
+  storageProfile: string;
+  /** Environment variable name for the S3 access key ID */
+  storageAccessKeyEnv: string;
+  /** Environment variable name for the S3 secret access key */
+  storageSecretKeyEnv: string;
+  /** Environment variable name for the S3 session token */
+  storageSessionTokenEnv: string;
+  /** Whether the local embedding cache is enabled */
+  cacheEnabled: boolean;
+  /** Maximum number of cache entries to retain locally (0 = unlimited) */
+  cacheMaxEntries: number;
+  /** TTL for cache entries in hours (0 = disabled) */
+  cacheTtlHours: number;
 }
 
 /**
@@ -83,6 +107,18 @@ export const DEFAULT_CONFIG: LgrepConfig = {
   embedBatchSize: 10,
   dbBatchSize: 250,
   parallelFiles: 10,
+  storageMode: 'local',
+  storageUri: '',
+  storageEndpoint: '',
+  storageRegion: 'auto',
+  storageCredentialSource: 'auto',
+  storageProfile: 'default',
+  storageAccessKeyEnv: 'AWS_ACCESS_KEY_ID',
+  storageSecretKeyEnv: 'AWS_SECRET_ACCESS_KEY',
+  storageSessionTokenEnv: 'AWS_SESSION_TOKEN',
+  cacheEnabled: true,
+  cacheMaxEntries: 50000,
+  cacheTtlHours: 0,
 };
 
 /**

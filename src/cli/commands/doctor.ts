@@ -2,8 +2,13 @@ import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { openDatabase, getIndex, listIndexes } from '../../storage/lance.js';
-import { getDbPath, getLgrepHome, getConfigPath } from '../utils/paths.js';
+import { getIndex, listIndexes } from '../../storage/lance.js';
+import {
+  openConfiguredDatabase,
+  getConfiguredDatabaseLocationSync,
+  resolveDatabaseSettingsSync,
+} from '../../storage/database-config.js';
+import { getLgrepHome, getConfigPath } from '../utils/paths.js';
 import { loadConfig } from '../../storage/config.js';
 import { DaemonManager } from '../../daemon/manager.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
@@ -206,8 +211,9 @@ function checkConfig(): CheckResult {
  * Check indexes.
  */
 async function checkIndexes(): Promise<CheckResult> {
-  const dbPath = getDbPath();
-  if (!existsSync(dbPath)) {
+  const settings = resolveDatabaseSettingsSync();
+  const dbPath = getConfiguredDatabaseLocationSync();
+  if (settings.mode === 'local' && !existsSync(dbPath)) {
     return {
       name: 'Indexes',
       status: 'warn',
@@ -217,7 +223,7 @@ async function checkIndexes(): Promise<CheckResult> {
   }
 
   try {
-    const db = await openDatabase(dbPath);
+    const db = await openConfiguredDatabase();
     const indexes = await listIndexes(db);
     await db.close();
 
@@ -265,23 +271,20 @@ async function checkCurrentDirectory(targetPath: string): Promise<CheckResult> {
   }
 
   // Try to find by name
-  const dbPath = getDbPath();
-  if (existsSync(dbPath)) {
-    try {
-      const db = await openDatabase(dbPath);
-      const index = await getIndex(db, dirName);
-      await db.close();
+  try {
+    const db = await openConfiguredDatabase();
+    const index = await getIndex(db, dirName);
+    await db.close();
 
-      if (index) {
-        return {
-          name: 'Current directory',
-          status: 'ok',
-          message: `Indexed as "${dirName}"`,
-        };
-      }
-    } catch {
-      // Ignore
+    if (index) {
+      return {
+        name: 'Current directory',
+        status: 'ok',
+        message: `Indexed as "${dirName}"`,
+      };
     }
+  } catch {
+    // Ignore
   }
 
   return {
@@ -374,8 +377,9 @@ function checkClaudeIntegration(): CheckResult {
  * These occur when indexing processes crash or are killed.
  */
 async function checkZombieIndexes(): Promise<CheckResult> {
-  const dbPath = getDbPath();
-  if (!existsSync(dbPath)) {
+  const settings = resolveDatabaseSettingsSync();
+  const dbPath = getConfiguredDatabaseLocationSync();
+  if (settings.mode === 'local' && !existsSync(dbPath)) {
     return {
       name: 'Zombie indexes',
       status: 'ok',
@@ -384,7 +388,7 @@ async function checkZombieIndexes(): Promise<CheckResult> {
   }
 
   try {
-    const db = await openDatabase(dbPath);
+    const db = await openConfiguredDatabase();
     const indexes = await listIndexes(db);
     await db.close();
 

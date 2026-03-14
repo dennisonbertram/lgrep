@@ -34,6 +34,17 @@ describe('embedding cache', () => {
       expect(newCache).toBeDefined();
       await newCache.close();
     });
+
+    it('should support a disabled cache handle', async () => {
+      const disabledCache = await openEmbeddingCache(join(testDir, 'disabled'), {
+        enabled: false,
+      });
+
+      expect(disabledCache.enabled).toBe(false);
+      expect(disabledCache.connection).toBeNull();
+
+      await disabledCache.close();
+    });
   });
 
   describe('setEmbedding / getEmbedding', () => {
@@ -95,6 +106,65 @@ describe('embedding cache', () => {
 
       const retrieved = await getEmbedding(cache, model, content);
       expect(Array.from(retrieved!)).toEqual(Array.from(vector2));
+    });
+
+    it('should treat disabled cache as a cache miss and ignore writes', async () => {
+      const disabledCache = await openEmbeddingCache(join(testDir, 'disabled-writes'), {
+        enabled: false,
+      });
+
+      try {
+        const vector = new Float32Array([0.1, 0.2]);
+        await setEmbedding(disabledCache, 'model', 'content', vector);
+
+        const retrieved = await getEmbedding(disabledCache, 'model', 'content');
+        expect(retrieved).toBeNull();
+      } finally {
+        await disabledCache.close();
+      }
+    });
+
+    it('should evict the oldest entries when maxEntries is exceeded', async () => {
+      const limitedCache = await openEmbeddingCache(join(testDir, 'limited-cache'), {
+        maxEntries: 2,
+      });
+
+      try {
+        await setEmbedding(limitedCache, 'model', 'content-1', new Float32Array([0.1]));
+        await setEmbedding(limitedCache, 'model', 'content-2', new Float32Array([0.2]));
+        await setEmbedding(limitedCache, 'model', 'content-3', new Float32Array([0.3]));
+
+        expect(await getEmbedding(limitedCache, 'model', 'content-1')).toBeNull();
+        expect((await getEmbedding(limitedCache, 'model', 'content-2'))?.[0]).toBeCloseTo(0.2);
+        expect((await getEmbedding(limitedCache, 'model', 'content-3'))?.[0]).toBeCloseTo(0.3);
+      } finally {
+        await limitedCache.close();
+      }
+    });
+
+    it('should treat expired entries as cache misses when ttlHours is configured', async () => {
+      const ttlCache = await openEmbeddingCache(join(testDir, 'ttl-cache'), {
+        ttlHours: 1,
+      });
+
+      try {
+        await setEmbedding(ttlCache, 'model', 'stale-content', new Float32Array([0.4]));
+
+        const table = await ttlCache.connection!.openTable('embeddings');
+        const records = await table.query().toArray();
+        const staleRecord = records[0]!;
+
+        await table.delete(`cache_key = '${staleRecord['cache_key'] as string}'`);
+        await table.add([{
+          ...staleRecord,
+          created_at: '2000-01-01T00:00:00.000Z',
+        }]);
+
+        const retrieved = await getEmbedding(ttlCache, 'model', 'stale-content');
+        expect(retrieved).toBeNull();
+      } finally {
+        await ttlCache.close();
+      }
     });
   });
 

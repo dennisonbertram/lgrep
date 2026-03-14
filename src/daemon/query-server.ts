@@ -7,12 +7,12 @@ import { createServer, Socket, Server } from 'node:net';
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { getLgrepHome } from '../cli/utils/paths.js';
-import { openDatabase, getIndex, searchChunks, rerankerWithMMR, type IndexDatabase, type IndexHandle } from '../storage/lance.js';
+import { getIndex, searchChunks, rerankerWithMMR, type IndexDatabase, type IndexHandle } from '../storage/lance.js';
+import { openConfiguredDatabase } from '../storage/database-config.js';
 import { getCalls, searchSymbols, getSymbols } from '../storage/code-intel.js';
 import type { CallEdge, CodeSymbol } from '../types/code-intel.js';
 import { createEmbeddingClient, type EmbeddingClient } from '../core/embeddings.js';
 import { loadConfig } from '../storage/config.js';
-import { getDbPath } from '../cli/utils/paths.js';
 
 /**
  * JSON-RPC request format.
@@ -65,8 +65,7 @@ export class QueryServer {
     await loadConfig();
 
     // Open database
-    const dbPath = getDbPath();
-    this.db = await openDatabase(dbPath);
+    this.db = await openConfiguredDatabase();
 
     // Get the index
     this.indexHandle = await getIndex(this.db, this.indexName);

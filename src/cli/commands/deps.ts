@@ -1,6 +1,6 @@
-import { openDatabase, getIndex } from '../../storage/lance.js';
+import { getIndex } from '../../storage/lance.js';
 import { getDependencies } from '../../storage/code-intel.js';
-import { getDbPath } from '../utils/paths.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { createSpinner } from '../utils/progress.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 
@@ -74,8 +74,7 @@ export async function runDepsCommand(
 
     // Open database
     spinner?.update('Opening database...');
-    const dbPath = getDbPath();
-    const db = await openDatabase(dbPath);
+    const db = await openConfiguredDatabase();
 
     try {
       // Get the index

@@ -151,6 +151,23 @@ describe('lance storage', () => {
       expect(handle?.metadata.model).toBe('test-model');
     });
 
+    it('should retrieve metadata even when the local meta.json shadow is missing', async () => {
+      await createIndex(db, {
+        name: 'table-backed-index',
+        rootPath: '/test',
+        model: 'test-model',
+        modelDimensions: 1024,
+      });
+
+      await rm(join(db.path, 'table-backed-index'), { recursive: true, force: true });
+
+      const handle = await getIndex(db, 'table-backed-index');
+
+      expect(handle).toBeDefined();
+      expect(handle?.metadata.rootPath).toBe('/test');
+      expect(handle?.metadata.model).toBe('test-model');
+    });
+
     it('should return null for non-existent index', async () => {
       const handle = await getIndex(db, 'nonexistent');
       expect(handle).toBeNull();
@@ -251,6 +268,29 @@ describe('lance storage', () => {
 
       const indexB = indexes.find(i => i.name === 'index-b');
       expect(indexB?.metadata.model).toBe('model-b');
+    });
+
+    it('should list indexes from metadata even when local shadow directories are removed', async () => {
+      await createIndex(db, {
+        name: 'remote-a',
+        rootPath: '/a',
+        model: 'model-a',
+        modelDimensions: 512,
+      });
+
+      await createIndex(db, {
+        name: 'remote-b',
+        rootPath: '/b',
+        model: 'model-b',
+        modelDimensions: 1024,
+      });
+
+      await rm(join(db.path, 'remote-a'), { recursive: true, force: true });
+      await rm(join(db.path, 'remote-b'), { recursive: true, force: true });
+
+      const indexes = await listIndexes(db);
+
+      expect(indexes.map(i => i.name).sort()).toEqual(['remote-a', 'remote-b']);
     });
   });
 
@@ -418,6 +458,15 @@ describe('lance storage', () => {
 
         const updated = await getIndex(db, handle.name);
         expect(updated?.metadata.chunkCount).toBe(2);
+      });
+
+      it('should update status even when the local meta.json shadow is missing', async () => {
+        await rm(join(db.path, handle.name), { recursive: true, force: true });
+
+        await updateIndexStatus(db, handle, 'ready');
+
+        const updated = await getIndex(db, handle.name);
+        expect(updated?.metadata.status).toBe('ready');
       });
     });
   });

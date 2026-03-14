@@ -1,8 +1,8 @@
 import { createEmbeddingClient } from '../../core/embeddings.js';
 import { buildContext } from '../../core/context-builder.js';
 import { loadConfig } from '../../storage/config.js';
-import { openDatabase, getIndex } from '../../storage/lance.js';
-import { getDbPath } from '../utils/paths.js';
+import { getIndex } from '../../storage/lance.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 import type { ContextPackage } from '../../types/context.js';
 
@@ -54,8 +54,7 @@ export async function runContextCommand(
   const config = await loadConfig();
 
   // Open database
-  const dbPath = getDbPath();
-  const db = await openDatabase(dbPath);
+  const db = await openConfiguredDatabase();
 
   try {
     // Get the index

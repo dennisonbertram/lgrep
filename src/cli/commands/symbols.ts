@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
-import { openDatabase, getIndex } from '../../storage/lance.js';
-import { getDbPath } from '../utils/paths.js';
+import { getIndex } from '../../storage/lance.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 import { getSymbols, searchSymbols } from '../../storage/code-intel.js';
 import type { CodeSymbol } from '../../types/code-intel.js';
@@ -68,8 +68,7 @@ export async function runSymbolsCommand(
     indexName = detected ?? basename(process.cwd());
   }
 
-  const dbPath = getDbPath();
-  const db = await openDatabase(dbPath);
+  const db = await openConfiguredDatabase();
 
   try {
     const handle = await getIndex(db, indexName);

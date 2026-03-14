@@ -1,7 +1,7 @@
 import { resolve, dirname, join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
-import { openDatabase, listIndexes } from '../../storage/lance.js';
-import { getDbPath } from './paths.js';
+import { listIndexes } from '../../storage/lance.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 
 /**
  * Normalize a path for comparison by:
@@ -55,8 +55,7 @@ export async function detectIndexForDirectory(
   directory?: string
 ): Promise<string | null> {
   const targetDir = directory ?? process.cwd();
-  const dbPath = getDbPath();
-  const db = await openDatabase(dbPath);
+  const db = await openConfiguredDatabase();
 
   try {
     const indexes = await listIndexes(db);

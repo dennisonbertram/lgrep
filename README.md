@@ -330,6 +330,39 @@ lgrep config get model                               # Get specific setting
 lgrep config set summarizationModel anthropic:claude-3-5-haiku-latest
 ```
 
+### Remote Storage
+
+lgrep can store generated indexes in an S3-compatible object store instead of the local `db` directory. Cloudflare R2 is the intended first backend.
+
+```bash
+export R2_ACCESS_KEY_ID="..."
+export R2_SECRET_ACCESS_KEY="..."
+
+lgrep config set storageMode s3
+lgrep config set storageUri s3://my-r2-bucket/lgrep
+lgrep config set storageEndpoint https://<account-id>.r2.cloudflarestorage.com
+lgrep config set storageRegion auto
+lgrep config set storageAccessKeyEnv R2_ACCESS_KEY_ID
+lgrep config set storageSecretKeyEnv R2_SECRET_ACCESS_KEY
+```
+
+The embedding cache stays local in phase 1. You can tune it with `cacheEnabled`, `cacheMaxEntries`, and `cacheTtlHours`.
+
+For a machine-local install, use the auth flow instead of a repo `.env`:
+
+```bash
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+
+lgrep auth r2 \
+  --storage-uri s3://lgrep/indexes \
+  --endpoint https://<account-id>.r2.cloudflarestorage.com
+```
+
+That stores credentials in the local macOS keychain and switches the global lgrep config to keychain-backed R2 access.
+
+See [docs/guides/remote-storage.md](docs/guides/remote-storage.md) for setup, migration, and rollback details.
+
 ## Multi-Provider Support
 
 ### Embedding Providers
@@ -439,7 +472,13 @@ Override with `LGREP_HOME` environment variable.
 {
   "model": "auto",
   "summarizationModel": "auto",
-  "ollamaHost": "http://localhost:11434",
+  "storageMode": "local",
+  "storageUri": "",
+  "storageEndpoint": "",
+  "storageRegion": "auto",
+  "cacheEnabled": true,
+  "cacheMaxEntries": 50000,
+  "cacheTtlHours": 0,
   "embedBatchSize": 10,
   "dbBatchSize": 250,
   "parallelFiles": 10
@@ -451,6 +490,9 @@ Override with `LGREP_HOME` environment variable.
 ```bash
 LGREP_HOME          # Config/data directory (default: ~/.lgrep)
 OLLAMA_HOST         # Ollama server URL
+AWS_ACCESS_KEY_ID   # Default S3-compatible access key env name for remote storage
+AWS_SECRET_ACCESS_KEY
+AWS_SESSION_TOKEN
 
 # Embedding providers (priority: OpenAI > Cohere > Voyage > Ollama)
 OPENAI_API_KEY      # OpenAI API key (embeddings + LLM)

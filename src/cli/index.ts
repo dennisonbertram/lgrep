@@ -24,6 +24,7 @@ import { runImpactCommand } from './commands/impact.js';
 import { runDoctorCommand } from './commands/doctor.js';
 import { runGraphCommand } from './commands/graph.js';
 import { runStatsCommand } from './commands/stats.js';
+import { runAuthR2Command, runAuthStatusCommand } from './commands/auth.js';
 import { runLogsCommand, followLogs } from './commands/logs.js';
 import { runSymbolsCommand } from './commands/symbols.js';
 import { runExplainCommand } from './commands/explain.js';
@@ -36,8 +37,8 @@ import {
 } from './commands/daemon.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { detectIndexForDirectory } from './utils/auto-detect.js';
-import { openDatabase, deleteIndex } from '../storage/lance.js';
-import { getDbPath } from './utils/paths.js';
+import { deleteIndex } from '../storage/lance.js';
+import { openConfiguredDatabase } from '../storage/database-config.js';
 import { checkFirstRun } from './utils/first-run.js';
 
 const program = new Command();
@@ -150,8 +151,7 @@ program
 
       // Handle --force flag: delete existing index first
       if (options.force && options.name) {
-        const dbPath = getDbPath();
-        const db = await openDatabase(dbPath);
+        const db = await openConfiguredDatabase();
         try {
           await deleteIndex(db, options.name);
         } finally {
@@ -451,6 +451,92 @@ program
     try {
       const output = await runConfigCommand(key, value, options.json);
       console.log(output);
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+const authCmd = program
+  .command('auth')
+  .description('Manage local remote-storage credentials');
+
+authCmd
+  .command('r2')
+  .description('Store Cloudflare R2 credentials in the local keychain and switch lgrep to use them')
+  .option('--profile <name>', 'Credential profile name', 'default')
+  .option('--access-key-id <value>', 'Access key ID to store')
+  .option('--secret-access-key <value>', 'Secret access key to store')
+  .option('--session-token <value>', 'Optional session token to store')
+  .option('--access-key-id-env <name>', 'Environment variable name to read the access key from', 'AWS_ACCESS_KEY_ID')
+  .option('--secret-access-key-env <name>', 'Environment variable name to read the secret key from', 'AWS_SECRET_ACCESS_KEY')
+  .option('--session-token-env <name>', 'Environment variable name to read the session token from', 'AWS_SESSION_TOKEN')
+  .option('--storage-uri <uri>', 'Default storage URI to save into lgrep config')
+  .option('--endpoint <url>', 'Default R2 endpoint to save into lgrep config')
+  .option('--region <name>', 'Remote storage region to save into lgrep config', 'auto')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: {
+    profile?: string;
+    accessKeyId?: string;
+    secretAccessKey?: string;
+    sessionToken?: string;
+    accessKeyIdEnv?: string;
+    secretAccessKeyEnv?: string;
+    sessionTokenEnv?: string;
+    storageUri?: string;
+    endpoint?: string;
+    region?: string;
+    json?: boolean;
+  }) => {
+    try {
+      const result = await runAuthR2Command(options);
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log(`Stored R2 credentials in keychain profile "${result.profile}"`);
+      if (result.storageUri) {
+        console.log(`Configured remote storage: ${result.storageUri}`);
+      }
+      if (result.endpoint) {
+        console.log(`Configured endpoint: ${result.endpoint}`);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+authCmd
+  .command('status')
+  .description('Show remote credential status for the local lgrep install')
+  .option('--profile <name>', 'Credential profile name override')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { profile?: string; json?: boolean }) => {
+    try {
+      const result = await runAuthStatusCommand(options.profile);
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log('lgrep auth status');
+      console.log(`  Storage mode: ${result.storageMode}`);
+      console.log(`  Storage URI: ${result.storageUri || '(not configured)'}`);
+      console.log(`  Endpoint: ${result.endpoint || '(not configured)'}`);
+      console.log(`  Credential source: ${result.credentialSource}`);
+      console.log(`  Profile: ${result.profile}`);
+      console.log(`  Keychain supported: ${result.keychainSupported ? 'yes' : 'no'}`);
+      console.log(`  Credentials stored: ${result.credentialsStored ? 'yes' : 'no'}`);
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));

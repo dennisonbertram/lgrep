@@ -1,17 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { resolve, join } from 'node:path';
 import { detectIndexForDirectory } from './auto-detect.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import * as lance from '../../storage/lance.js';
 
 // Mock the lance module
 vi.mock('../../storage/lance.js', () => ({
-  openDatabase: vi.fn(),
   listIndexes: vi.fn(),
 }));
 
-// Mock paths module
-vi.mock('./paths.js', () => ({
-  getDbPath: vi.fn(() => '/mock/db/path'),
+vi.mock('../../storage/database-config.js', () => ({
+  openConfiguredDatabase: vi.fn(),
 }));
 
 describe('detectIndexForDirectory', () => {
@@ -22,7 +21,7 @@ describe('detectIndexForDirectory', () => {
   };
 
   beforeEach(() => {
-    vi.mocked(lance.openDatabase).mockResolvedValue(mockDb);
+    vi.mocked(openConfiguredDatabase).mockResolvedValue(mockDb as never);
     vi.mocked(lance.listIndexes).mockResolvedValue([]);
     mockDb.close.mockClear();
   });

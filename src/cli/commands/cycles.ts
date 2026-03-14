@@ -1,6 +1,6 @@
-import { openDatabase, getIndex } from '../../storage/lance.js';
+import { getIndex } from '../../storage/lance.js';
 import { getDependencies } from '../../storage/code-intel.js';
-import { getDbPath } from '../utils/paths.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import type { CodeDependency } from '../../types/code-intel.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 import { createSpinner } from '../utils/progress.js';
@@ -48,8 +48,7 @@ export async function runCyclesCommand(
     }
 
     spinner?.update('Opening database...');
-    const dbPath = getDbPath();
-    const db = await openDatabase(dbPath);
+    const db = await openConfiguredDatabase();
 
     try {
       spinner?.update('Loading dependencies...');

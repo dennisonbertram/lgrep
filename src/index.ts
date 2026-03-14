@@ -48,3 +48,4 @@ export { getLgrepHome, getDbPath, getConfigPath, getCachePath, getIndexPath, get
 
 // CLI commands
 export { runDoctorCommand, type DoctorResult, type DoctorOptions, type CheckResult } from './cli/commands/doctor.js';
+export { runAuthR2Command, runAuthStatusCommand } from './cli/commands/auth.js';

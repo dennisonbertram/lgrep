@@ -1,14 +1,13 @@
 import { createEmbeddingClient } from '../../core/embeddings.js';
 import { loadConfig } from '../../storage/config.js';
 import {
-  openDatabase,
   getIndex,
   searchChunks,
   rerankerWithMMR,
   type SearchResult,
 } from '../../storage/lance.js';
 import { getCalls, searchSymbols, getSymbols } from '../../storage/code-intel.js';
-import { getDbPath } from '../utils/paths.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { createSpinner } from '../utils/progress.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 
@@ -141,8 +140,7 @@ export async function runSearchCommand(
 
     // Open database
     spinner?.update('Opening database...');
-    const dbPath = getDbPath();
-    const db = await openDatabase(dbPath);
+    const db = await openConfiguredDatabase();
 
     try {
       // Get the index
