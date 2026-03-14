@@ -1,7 +1,7 @@
-import { openDatabase, getIndex } from '../../storage/lance.js';
+import { getIndex } from '../../storage/lance.js';
 import { getCalls, getSymbols } from '../../storage/code-intel.js';
 import type { CodeSymbol } from '../../types/code-intel.js';
-import { getDbPath } from '../utils/paths.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 import { createSpinner } from '../utils/progress.js';
 
@@ -61,8 +61,7 @@ export async function runDeadCommand(
     }
 
     spinner?.update('Opening database...');
-    const dbPath = getDbPath();
-    const db = await openDatabase(dbPath);
+    const db = await openConfiguredDatabase();
 
     try {
       spinner?.update(`Loading index "${indexName}"...`);

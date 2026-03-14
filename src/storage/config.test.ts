@@ -80,6 +80,19 @@ describe('config management', () => {
     it('should have default db batch size of 250', () => {
       expect(DEFAULT_CONFIG.dbBatchSize).toBe(250);
     });
+
+    it('should default to local storage mode', () => {
+      expect(DEFAULT_CONFIG.storageMode).toBe('local');
+      expect(DEFAULT_CONFIG.storageUri).toBe('');
+      expect(DEFAULT_CONFIG.storageCredentialSource).toBe('auto');
+      expect(DEFAULT_CONFIG.storageProfile).toBe('default');
+    });
+
+    it('should keep the embedding cache enabled locally by default', () => {
+      expect(DEFAULT_CONFIG.cacheEnabled).toBe(true);
+      expect(DEFAULT_CONFIG.cacheMaxEntries).toBe(50000);
+      expect(DEFAULT_CONFIG.cacheTtlHours).toBe(0);
+    });
   });
 
   describe('loadConfig', () => {
@@ -198,6 +211,13 @@ describe('config management', () => {
 
       const config = await loadConfig();
       expect(config.dbBatchSize).toBe(500);
+    });
+
+    it('should set storageMode value', async () => {
+      await setConfigValue('storageMode', 's3');
+
+      const config = await loadConfig();
+      expect(config.storageMode).toBe('s3');
     });
   });
 });

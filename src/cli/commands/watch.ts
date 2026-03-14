@@ -1,8 +1,8 @@
 import { resolve, basename } from 'node:path';
 import { access } from 'node:fs/promises';
 import { DaemonManager } from '../../daemon/manager.js';
-import { openDatabase, getIndex } from '../../storage/lance.js';
-import { getDbPath } from '../utils/paths.js';
+import { getIndex } from '../../storage/lance.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { runIndexCommand } from './index.js';
 
 /**
@@ -49,8 +49,7 @@ export async function runWatchCommand(
   const indexName = options.name ?? basename(absolutePath);
 
   // Check if index exists, create if needed
-  const dbPath = getDbPath();
-  const db = await openDatabase(dbPath);
+  const db = await openConfiguredDatabase();
   try {
     const existingIndex = await getIndex(db, indexName);
 

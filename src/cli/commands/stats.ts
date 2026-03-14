@@ -1,7 +1,11 @@
 import { existsSync, statSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
-import { openDatabase, getIndex, listIndexes, getChunkCount } from '../../storage/lance.js';
-import { getDbPath, getLgrepHome } from '../utils/paths.js';
+import { getIndex, listIndexes, getChunkCount, type IndexDatabase } from '../../storage/lance.js';
+import {
+  openConfiguredDatabase,
+  getConfiguredDatabaseLocationSync,
+  resolveDatabaseSettingsSync,
+} from '../../storage/database-config.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 import { getSymbols, getCalls, getDependencies } from '../../storage/code-intel.js';
 import { DaemonManager } from '../../daemon/manager.js';
@@ -58,7 +62,7 @@ export interface StatsOptions {
  * Get stats for a single index.
  */
 async function getIndexStats(
-  db: Awaited<ReturnType<typeof openDatabase>>,
+  db: IndexDatabase,
   indexName: string,
   manager: DaemonManager
 ): Promise<IndexStats | null> {
@@ -98,10 +102,10 @@ async function getIndexStats(
  * Run the stats command.
  */
 export async function runStatsCommand(options: StatsOptions = {}): Promise<StatsResult> {
-  const dbPath = getDbPath();
-  const lgrepHome = getLgrepHome();
+  const settings = resolveDatabaseSettingsSync();
+  const dbPath = getConfiguredDatabaseLocationSync();
 
-  if (!existsSync(dbPath)) {
+  if (settings.mode === 'local' && !existsSync(dbPath)) {
     return {
       success: false,
       dbPath,
@@ -150,7 +154,7 @@ export async function runStatsCommand(options: StatsOptions = {}): Promise<Stats
     // Ignore
   }
 
-  const db = await openDatabase(dbPath);
+  const db = await openConfiguredDatabase();
   const manager = new DaemonManager();
 
   try {

@@ -5,7 +5,22 @@ import { formatAsJson } from './json-formatter.js';
 const VALID_KEYS = Object.keys(DEFAULT_CONFIG) as (keyof LgrepConfig)[];
 
 // Keys that should be parsed as numbers
-const NUMERIC_KEYS: (keyof LgrepConfig)[] = ['chunkSize', 'chunkOverlap', 'maxFileSize'];
+const NUMERIC_KEYS: (keyof LgrepConfig)[] = [
+  'chunkSize',
+  'chunkOverlap',
+  'maxFileSize',
+  'maxSummaryLength',
+  'contextMaxTokens',
+  'contextGraphDepth',
+  'contextFileLimit',
+  'embedBatchSize',
+  'dbBatchSize',
+  'parallelFiles',
+  'cacheMaxEntries',
+  'cacheTtlHours',
+];
+
+const BOOLEAN_KEYS: (keyof LgrepConfig)[] = ['enableSummarization', 'cacheEnabled'];
 
 /**
  * Run the config command.
@@ -67,6 +82,17 @@ function parseValue(key: keyof LgrepConfig, value: string): LgrepConfig[keyof Lg
       throw new Error(`Invalid numeric value for ${key}: ${value}`);
     }
     return num;
+  }
+
+  if (BOOLEAN_KEYS.includes(key)) {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') {
+      return true;
+    }
+    if (normalized === 'false') {
+      return false;
+    }
+    throw new Error(`Invalid boolean value for ${key}: ${value}`);
   }
 
   // For array fields, split by comma

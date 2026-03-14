@@ -1,5 +1,5 @@
-import { openDatabase, listIndexes, type IndexHandle } from '../../storage/lance.js';
-import { getDbPath } from '../utils/paths.js';
+import { listIndexes, type IndexHandle } from '../../storage/lance.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { formatAsJson } from './json-formatter.js';
 import { DaemonManager } from '../../daemon/manager.js';
 
@@ -10,8 +10,7 @@ import { DaemonManager } from '../../daemon/manager.js';
  * @returns Output string to display
  */
 export async function runListCommand(json?: boolean): Promise<string> {
-  const dbPath = getDbPath();
-  const db = await openDatabase(dbPath);
+  const db = await openConfiguredDatabase();
 
   try {
     const indexes = await listIndexes(db);

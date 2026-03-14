@@ -21,5 +21,10 @@ coverage/
 # Vitest cache
 .vite/
 
+# Local secrets
+.env
+.env.*
+!.env.example
+
 # lgrep data directory (for testing)
 *.lancedb/

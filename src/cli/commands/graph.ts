@@ -3,10 +3,10 @@ import { readFile } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import open from 'open';
-import { openDatabase, getIndex, listIndexes, type IndexDatabase } from '../../storage/lance.js';
+import { getIndex, listIndexes, type IndexDatabase } from '../../storage/lance.js';
 import { getCalls, getDependencies } from '../../storage/code-intel.js';
 import type { CodeDependency, CallEdge } from '../../types/code-intel.js';
-import { getDbPath } from '../utils/paths.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 import { createSpinner } from '../utils/progress.js';
 import type { IndexHandle } from '../../storage/lance.js';
@@ -95,8 +95,7 @@ export async function runGraphCommand(
   }
  
   spinner?.update('Opening database...');
-  const dbPath = getDbPath();
-  const db = await openDatabase(dbPath);
+  const db = await openConfiguredDatabase();
  
   // Validate index exists before starting server
   spinner?.update(`Loading index "${indexName}"...`);

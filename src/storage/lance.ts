@@ -1,9 +1,10 @@
 import * as lancedb from '@lancedb/lancedb';
 import { mkdir, rm, readdir, readFile, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { DatabaseSettings } from './database-config.js';
 
 /**
- * Index metadata stored in meta.json for each index.
+ * Index metadata stored in LanceDB and shadowed to meta.json in local mode.
  */
 export interface IndexMetadata {
   schemaVersion: number;
@@ -75,24 +76,258 @@ export interface SearchResult extends DocumentChunk {
  */
 export interface IndexDatabase {
   path: string;
+  mode: 'local' | 's3';
   connection: lancedb.Connection;
+  tableExistence: Map<string, boolean>;
   close(): Promise<void>;
 }
 
 const CURRENT_SCHEMA_VERSION = 1;
+const INDEX_METADATA_TABLE = '__indexes';
+const TABLE_NAME = 'chunks';
+const FILE_METADATA_TABLE_SUFFIX = 'files';
+const INDEX_TABLE_SUFFIXES = [
+  TABLE_NAME,
+  FILE_METADATA_TABLE_SUFFIX,
+  'symbols',
+  'dependencies',
+  'calls',
+] as const;
+
+interface IndexMetadataRecord {
+  name: string;
+  root_path: string;
+  status: 'building' | 'ready' | 'failed';
+  model: string;
+  model_dimensions: number;
+  created_at: string;
+  updated_at: string;
+  document_count: number;
+  chunk_count: number;
+  generation_id: number;
+  schema_version: number;
+  [key: string]: unknown;
+}
+
+function escapeSql(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function metadataToRecord(metadata: IndexMetadata): IndexMetadataRecord {
+  return {
+    name: metadata.name,
+    root_path: metadata.rootPath,
+    status: metadata.status,
+    model: metadata.model,
+    model_dimensions: metadata.modelDimensions,
+    created_at: metadata.createdAt,
+    updated_at: metadata.updatedAt,
+    document_count: metadata.documentCount,
+    chunk_count: metadata.chunkCount,
+    generation_id: metadata.generationId,
+    schema_version: metadata.schemaVersion,
+  };
+}
+
+function recordToMetadata(record: Record<string, unknown>): IndexMetadata {
+  return {
+    schemaVersion: record['schema_version'] as number,
+    name: record['name'] as string,
+    rootPath: record['root_path'] as string,
+    status: record['status'] as IndexMetadata['status'],
+    model: record['model'] as string,
+    modelDimensions: record['model_dimensions'] as number,
+    createdAt: record['created_at'] as string,
+    updatedAt: record['updated_at'] as string,
+    documentCount: record['document_count'] as number,
+    chunkCount: record['chunk_count'] as number,
+    generationId: record['generation_id'] as number,
+  };
+}
+
+function getLegacyIndexDir(db: IndexDatabase, name: string): string {
+  return join(db.path, name);
+}
+
+async function writeLegacyMetadata(db: IndexDatabase, metadata: IndexMetadata): Promise<void> {
+  if (db.mode !== 'local') {
+    return;
+  }
+
+  const indexDir = getLegacyIndexDir(db, metadata.name);
+  await mkdir(indexDir, { recursive: true });
+  await writeFile(join(indexDir, 'meta.json'), JSON.stringify(metadata, null, 2), 'utf-8');
+}
+
+async function readLegacyMetadata(db: IndexDatabase, name: string): Promise<IndexMetadata | null> {
+  if (db.mode !== 'local') {
+    return null;
+  }
+
+  try {
+    const content = await readFile(join(getLegacyIndexDir(db, name), 'meta.json'), 'utf-8');
+    return JSON.parse(content) as IndexMetadata;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function removeLegacyMetadata(db: IndexDatabase, name: string): Promise<void> {
+  if (db.mode !== 'local') {
+    return;
+  }
+
+  await rm(getLegacyIndexDir(db, name), { recursive: true, force: true });
+}
+
+async function tableExists(db: IndexDatabase, tableName: string): Promise<boolean> {
+  const cached = db.tableExistence.get(tableName);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const tableNames = await db.connection.tableNames();
+  let exists = tableNames.includes(tableName);
+  if (!exists) {
+    try {
+      await db.connection.openTable(tableName);
+      exists = true;
+    } catch {
+      exists = false;
+    }
+  }
+  db.tableExistence.set(tableName, exists);
+  return exists;
+}
+
+function rememberTable(db: IndexDatabase, tableName: string, exists: boolean): void {
+  db.tableExistence.set(tableName, exists);
+}
+
+function getKnownIndexTableNames(indexName: string): string[] {
+  return INDEX_TABLE_SUFFIXES.map((suffix) => `${indexName}_${suffix}`);
+}
+
+async function getMetadataTableIfExists(db: IndexDatabase): Promise<lancedb.Table | null> {
+  if (!(await tableExists(db, INDEX_METADATA_TABLE))) {
+    return null;
+  }
+
+  return await db.connection.openTable(INDEX_METADATA_TABLE);
+}
+
+async function ensureMetadataTable(db: IndexDatabase): Promise<lancedb.Table> {
+  const table = await getMetadataTableIfExists(db);
+  if (table) {
+    return table;
+  }
+
+  const placeholder: IndexMetadataRecord = {
+    name: '__placeholder__',
+    root_path: '',
+    status: 'building',
+    model: '',
+    model_dimensions: 0,
+    created_at: '',
+    updated_at: '',
+    document_count: 0,
+    chunk_count: 0,
+    generation_id: 0,
+    schema_version: CURRENT_SCHEMA_VERSION,
+  };
+
+  await db.connection.createTable(INDEX_METADATA_TABLE, [placeholder]);
+  rememberTable(db, INDEX_METADATA_TABLE, true);
+
+  const createdTable = await db.connection.openTable(INDEX_METADATA_TABLE);
+  await createdTable.delete("name = '__placeholder__'");
+  return createdTable;
+}
+
+async function saveMetadata(db: IndexDatabase, metadata: IndexMetadata): Promise<void> {
+  const table = await ensureMetadataTable(db);
+  await table.delete(`name = '${escapeSql(metadata.name)}'`);
+  await table.add([metadataToRecord(metadata)]);
+  await writeLegacyMetadata(db, metadata);
+}
+
+async function getStoredMetadata(db: IndexDatabase, name: string): Promise<IndexMetadata | null> {
+  const table = await getMetadataTableIfExists(db);
+  if (table) {
+    const results = await table
+      .query()
+      .where(`name = '${escapeSql(name)}'`)
+      .limit(1)
+      .toArray();
+
+    if (results.length > 0) {
+      return recordToMetadata(results[0] as Record<string, unknown>);
+    }
+  }
+
+  const legacy = await readLegacyMetadata(db, name);
+  if (legacy) {
+    await saveMetadata(db, legacy);
+  }
+  return legacy;
+}
+
+async function listStoredMetadata(db: IndexDatabase): Promise<IndexMetadata[]> {
+  const table = await getMetadataTableIfExists(db);
+  if (table) {
+    const records = await table.query().toArray();
+    const metadata = records.map((record: Record<string, unknown>) => recordToMetadata(record));
+    if (metadata.length > 0) {
+      return metadata;
+    }
+  }
+
+  if (db.mode !== 'local') {
+    return [];
+  }
+
+  const entries = await readdir(db.path, { withFileTypes: true });
+  const legacyIndexes: IndexMetadata[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+
+    const legacy = await readLegacyMetadata(db, entry.name);
+    if (!legacy) continue;
+
+    legacyIndexes.push(legacy);
+    await saveMetadata(db, legacy);
+  }
+
+  return legacyIndexes;
+}
 
 /**
  * Open or create a LanceDB database at the specified path.
  */
-export async function openDatabase(dbPath: string): Promise<IndexDatabase> {
-  // Ensure directory exists
-  await mkdir(dbPath, { recursive: true });
+export async function openDatabase(
+  dbPathOrSettings: string | DatabaseSettings
+): Promise<IndexDatabase> {
+  const settings = typeof dbPathOrSettings === 'string'
+    ? { mode: 'local' as const, uri: dbPathOrSettings }
+    : dbPathOrSettings;
 
-  const connection = await lancedb.connect(dbPath);
+  if (settings.mode === 'local') {
+    await mkdir(settings.uri, { recursive: true });
+  }
+
+  const connection = settings.storageOptions
+    ? await lancedb.connect(settings.uri, { storageOptions: settings.storageOptions })
+    : await lancedb.connect(settings.uri);
 
   return {
-    path: dbPath,
+    path: settings.uri,
+    mode: settings.mode,
     connection,
+    tableExistence: new Map(),
     close: async () => {
       // LanceDB connections don't require explicit close
       // but we keep the interface for consistency
@@ -107,21 +342,10 @@ export async function createIndex(
   db: IndexDatabase,
   options: CreateIndexOptions
 ): Promise<IndexHandle> {
-  const indexDir = join(db.path, options.name);
-
-  // Check if index already exists
-  try {
-    await access(indexDir);
+  const existing = await getStoredMetadata(db, options.name);
+  if (existing) {
     throw new Error(`Index "${options.name}" already exists`);
-  } catch (err) {
-    // Expected - directory shouldn't exist
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw err;
-    }
   }
-
-  // Create index directory
-  await mkdir(indexDir, { recursive: true });
 
   // Create metadata
   const now = new Date().toISOString();
@@ -139,9 +363,7 @@ export async function createIndex(
     generationId: 1,
   };
 
-  // Write metadata
-  const metaPath = join(indexDir, 'meta.json');
-  await writeFile(metaPath, JSON.stringify(metadata, null, 2), 'utf-8');
+  await saveMetadata(db, metadata);
 
   return {
     name: options.name,
@@ -157,24 +379,16 @@ export async function getIndex(
   db: IndexDatabase,
   name: string
 ): Promise<IndexHandle | null> {
-  const indexDir = join(db.path, name);
-  const metaPath = join(indexDir, 'meta.json');
-
-  try {
-    const metaContent = await readFile(metaPath, 'utf-8');
-    const metadata = JSON.parse(metaContent) as IndexMetadata;
-
-    return {
-      name,
-      metadata,
-      table: null,
-    };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return null;
-    }
-    throw err;
+  const metadata = await getStoredMetadata(db, name);
+  if (!metadata) {
+    return null;
   }
+
+  return {
+    name,
+    metadata,
+    table: null,
+  };
 }
 
 /**
@@ -184,41 +398,46 @@ export async function deleteIndex(
   db: IndexDatabase,
   name: string
 ): Promise<boolean> {
-  const indexDir = join(db.path, name);
-
-  try {
-    await access(indexDir);
-    await rm(indexDir, { recursive: true, force: true });
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return false;
-    }
-    throw err;
+  const existing = await getStoredMetadata(db, name);
+  if (!existing) {
+    return false;
   }
+
+  const metadataTable = await getMetadataTableIfExists(db);
+  if (metadataTable) {
+    await metadataTable.delete(`name = '${escapeSql(name)}'`);
+  }
+
+  const tableNames = await db.connection.tableNames();
+  const candidateTables = new Set([
+    ...tableNames.filter((tableName) => tableName.startsWith(`${name}_`)),
+    ...getKnownIndexTableNames(name),
+  ]);
+
+  for (const tableName of candidateTables) {
+    try {
+      await db.connection.dropTable(tableName);
+    } catch {
+      // Ignore missing tables to keep delete idempotent across backends
+    }
+    rememberTable(db, tableName, false);
+  }
+
+  await removeLegacyMetadata(db, name);
+  return true;
 }
 
 /**
  * List all indexes in the database.
  */
 export async function listIndexes(db: IndexDatabase): Promise<IndexHandle[]> {
-  const entries = await readdir(db.path, { withFileTypes: true });
-  const indexes: IndexHandle[] = [];
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-
-    const handle = await getIndex(db, entry.name);
-    if (handle) {
-      indexes.push(handle);
-    }
-  }
-
-  return indexes;
+  const metadata = await listStoredMetadata(db);
+  return metadata.map((entry) => ({
+    name: entry.name,
+    metadata: entry,
+    table: null,
+  }));
 }
-
-const TABLE_NAME = 'chunks';
-const FILE_METADATA_TABLE_SUFFIX = 'files';
 
 /**
  * File metadata record for hash optimization.
@@ -229,24 +448,6 @@ export interface FileMetadata {
   chunk_count: number;
   updated_at: string;
   [key: string]: unknown;  // Index signature for LanceDB compatibility
-}
-
-/**
- * Get or create the LanceDB table for an index.
- */
-async function getOrCreateTable(
-  db: IndexDatabase,
-  handle: IndexHandle
-): Promise<lancedb.Table> {
-  const tableNames = await db.connection.tableNames();
-  const fullTableName = `${handle.name}_${TABLE_NAME}`;
-
-  if (tableNames.includes(fullTableName)) {
-    return await db.connection.openTable(fullTableName);
-  }
-
-  // Table doesn't exist yet, return null - will be created on first add
-  throw new Error('TABLE_NOT_EXISTS');
 }
 
 /**
@@ -312,9 +513,11 @@ export async function addChunks(
     // Try to open existing table and add
     const table = await db.connection.openTable(fullTableName);
     await table.add(records);
+    rememberTable(db, fullTableName, true);
   } catch {
     // Table doesn't exist, create it with the first batch
     await db.connection.createTable(fullTableName, records);
+    rememberTable(db, fullTableName, true);
   }
 
   return chunks.length;
@@ -330,9 +533,7 @@ export async function searchChunks(
   options: SearchOptions
 ): Promise<SearchResult[]> {
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
-  const tableNames = await db.connection.tableNames();
-
-  if (!tableNames.includes(fullTableName)) {
+  if (!(await tableExists(db, fullTableName))) {
     return [];
   }
 
@@ -360,9 +561,7 @@ export async function getChunkCount(
   handle: IndexHandle
 ): Promise<number> {
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
-  const tableNames = await db.connection.tableNames();
-
-  if (!tableNames.includes(fullTableName)) {
+  if (!(await tableExists(db, fullTableName))) {
     return 0;
   }
 
@@ -378,7 +577,6 @@ export async function updateIndexStatus(
   handle: IndexHandle,
   status: 'building' | 'ready' | 'failed'
 ): Promise<void> {
-  const metaPath = join(db.path, handle.name, 'meta.json');
   const chunkCount = await getChunkCount(db, handle);
 
   const metadata: IndexMetadata = {
@@ -388,7 +586,7 @@ export async function updateIndexStatus(
     updatedAt: new Date().toISOString(),
   };
 
-  await writeFile(metaPath, JSON.stringify(metadata, null, 2), 'utf-8');
+  await saveMetadata(db, metadata);
   handle.metadata = metadata;
 }
 
@@ -402,9 +600,7 @@ export async function getFileContentHashes(
   handle: IndexHandle
 ): Promise<Map<string, string>> {
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
-  const tableNames = await db.connection.tableNames();
-
-  if (!tableNames.includes(fullTableName)) {
+  if (!(await tableExists(db, fullTableName))) {
     return new Map();
   }
 
@@ -438,9 +634,7 @@ export async function getChunksByFilePath(
   filePath: string
 ): Promise<DocumentChunk[]> {
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
-  const tableNames = await db.connection.tableNames();
-
-  if (!tableNames.includes(fullTableName)) {
+  if (!(await tableExists(db, fullTableName))) {
     return [];
   }
 
@@ -469,9 +663,7 @@ export async function deleteChunksByFilePath(
   filePath: string
 ): Promise<number> {
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
-  const tableNames = await db.connection.tableNames();
-
-  if (!tableNames.includes(fullTableName)) {
+  if (!(await tableExists(db, fullTableName))) {
     return 0;
   }
 
@@ -500,9 +692,7 @@ export async function deleteAllChunks(
   handle: IndexHandle
 ): Promise<number> {
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
-  const tableNames = await db.connection.tableNames();
-
-  if (!tableNames.includes(fullTableName)) {
+  if (!(await tableExists(db, fullTableName))) {
     return 0;
   }
 
@@ -515,6 +705,7 @@ export async function deleteAllChunks(
   // Delete all chunks by dropping and recreating table
   // This is more efficient than deleting row by row
   await db.connection.dropTable(fullTableName);
+  rememberTable(db, fullTableName, false);
 
   // Recreate empty table with same schema
   await db.connection.createTable(fullTableName, [
@@ -532,6 +723,7 @@ export async function deleteAllChunks(
       created_at: '',
     },
   ]);
+  rememberTable(db, fullTableName, true);
 
   // Delete the placeholder row
   const table = await db.connection.openTable(fullTableName);
@@ -549,9 +741,7 @@ export async function createFileMetadataTable(
   handle: IndexHandle
 ): Promise<void> {
   const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
-  const tableNames = await db.connection.tableNames();
-
-  if (tableNames.includes(fullTableName)) {
+  if (await tableExists(db, fullTableName)) {
     // Table already exists
     return;
   }
@@ -565,6 +755,7 @@ export async function createFileMetadataTable(
   };
 
   await db.connection.createTable(fullTableName, [placeholder]);
+  rememberTable(db, fullTableName, true);
 
   // Delete the placeholder
   const table = await db.connection.openTable(fullTableName);
@@ -584,9 +775,7 @@ export async function upsertFileMetadata(
   chunkCount: number
 ): Promise<void> {
   const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
-  const tableNames = await db.connection.tableNames();
-
-  if (!tableNames.includes(fullTableName)) {
+  if (!(await tableExists(db, fullTableName))) {
     throw new Error(`File metadata table does not exist for index "${handle.name}"`);
   }
 
@@ -624,9 +813,7 @@ export async function getFileMetadataHashes(
   handle: IndexHandle
 ): Promise<Map<string, string>> {
   const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
-  const tableNames = await db.connection.tableNames();
-
-  if (!tableNames.includes(fullTableName)) {
+  if (!(await tableExists(db, fullTableName))) {
     // Metadata table doesn't exist - return empty map
     // This handles migration case for old indexes
     return new Map();
@@ -654,9 +841,7 @@ export async function deleteFileMetadata(
   filePath: string
 ): Promise<void> {
   const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
-  const tableNames = await db.connection.tableNames();
-
-  if (!tableNames.includes(fullTableName)) {
+  if (!(await tableExists(db, fullTableName))) {
     // Table doesn't exist - nothing to delete
     return;
   }
