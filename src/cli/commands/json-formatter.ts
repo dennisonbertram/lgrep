@@ -2,6 +2,7 @@ import type { SearchCommandResult, SymbolUsage, SymbolDefinition, SymbolInfo } f
 import type { IndexResult } from './index.js';
 import type { AnalyzeResult } from './analyze.js';
 import type { ContextPackage } from '../../types/context.js';
+import type { IndexHandle } from '../../storage/lance.js';
 
 /**
  * JSON error format
@@ -157,7 +158,7 @@ export function formatAsJson(
       output = formatIndexJson(data as IndexResult);
       break;
     case 'list':
-      output = formatListJson(data as string);
+      output = formatListJson(data as IndexHandle[]);
       break;
     case 'delete':
       output = formatDeleteJson(data as string, meta);
@@ -262,54 +263,57 @@ function formatIndexJson(result: IndexResult): JsonIndexOutput {
 /**
  * Format list output as JSON
  */
-function formatListJson(output: string): JsonListOutput {
-  const indexes: Array<{
-    name: string;
-    files: number;
-    chunks: number;
-    created: string;
-  }> = [];
+function formatListJson(indexes: IndexHandle[] | string): JsonListOutput {
+  if (typeof indexes === 'string') {
+    const parsedIndexes: JsonListOutput['indexes'] = [];
+    const lines = indexes.split('\n');
+    let currentIndex: JsonListOutput['indexes'][number] | null = null;
 
-  // Parse the text output
-  const lines = output.split('\n');
-  let currentIndex: {
-    name: string;
-    files: number;
-    chunks: number;
-    created: string;
-  } | null = null;
+    for (const line of lines) {
+      const trimmed = line.trim();
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Index name (starts without whitespace after "Indexes:")
-    if (trimmed && !trimmed.startsWith('Path:') && !trimmed.startsWith('Model:') && !trimmed.startsWith('Status:') && !trimmed.startsWith('Chunks:') && trimmed !== 'Indexes:') {
-      if (currentIndex) {
-        indexes.push(currentIndex);
+      if (
+        trimmed &&
+        !trimmed.startsWith('Path:') &&
+        !trimmed.startsWith('Model:') &&
+        !trimmed.startsWith('Status:') &&
+        !trimmed.startsWith('Chunks:') &&
+        trimmed !== 'Indexes:'
+      ) {
+        if (currentIndex) {
+          parsedIndexes.push(currentIndex);
+        }
+        currentIndex = {
+          name: trimmed,
+          files: 0,
+          chunks: 0,
+          created: '',
+        };
       }
-      currentIndex = {
-        name: trimmed,
-        files: 0,
-        chunks: 0,
-        created: new Date().toISOString(),
-      };
-    }
 
-    // Chunks count
-    if (trimmed.startsWith('Chunks:') && currentIndex) {
-      const match = trimmed.match(/Chunks:\s*(\d+)/);
-      if (match && match[1]) {
-        currentIndex.chunks = parseInt(match[1], 10);
+      if (trimmed.startsWith('Chunks:') && currentIndex) {
+        const match = trimmed.match(/Chunks:\s*(\d+)/);
+        if (match?.[1]) {
+          currentIndex.chunks = parseInt(match[1], 10);
+        }
       }
     }
+
+    if (currentIndex) {
+      parsedIndexes.push(currentIndex);
+    }
+
+    return { indexes: parsedIndexes };
   }
 
-  // Push last index
-  if (currentIndex) {
-    indexes.push(currentIndex);
-  }
-
-  return { indexes };
+  return {
+    indexes: indexes.map((index) => ({
+      name: index.name,
+      files: index.metadata.documentCount,
+      chunks: index.metadata.chunkCount,
+      created: index.metadata.createdAt,
+    })),
+  };
 }
 
 /**

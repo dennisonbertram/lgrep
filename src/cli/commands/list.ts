@@ -1,4 +1,4 @@
-import { listIndexes, type IndexHandle } from '../../storage/lance.js';
+import { getChunkCount, getDocumentCount, listIndexes, type IndexHandle } from '../../storage/lance.js';
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { formatAsJson } from './json-formatter.js';
 import { DaemonManager } from '../../daemon/manager.js';
@@ -27,12 +27,30 @@ export async function runListCommand(json?: boolean): Promise<string> {
     const daemonManager = new DaemonManager();
     const runningWatchers = await daemonManager.list();
     const watcherNames = new Set(runningWatchers.map(w => w.indexName));
+    const hydratedIndexes = await Promise.all(indexes.map(async (index) => {
+      if (index.metadata.documentCount > 0 && index.metadata.chunkCount > 0) {
+        return index;
+      }
 
-    const textOutput = formatIndexList(indexes, watcherNames);
+      const [documentCount, chunkCount] = await Promise.all([
+        getDocumentCount(db, index),
+        getChunkCount(db, index),
+      ]);
+
+      return {
+        ...index,
+        metadata: {
+          ...index.metadata,
+          documentCount,
+          chunkCount,
+        },
+      };
+    }));
+
     if (json) {
-      return formatAsJson('list', textOutput);
+      return formatAsJson('list', hydratedIndexes);
     }
-    return textOutput;
+    return formatIndexList(hydratedIndexes, watcherNames);
   } finally {
     await db.close();
   }

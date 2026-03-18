@@ -71,6 +71,8 @@ describe('JSON CLI End-to-End Tests', () => {
     expect(Array.isArray(listParsed.indexes)).toBe(true);
     expect(listParsed.indexes.length).toBeGreaterThan(0);
     expect(listParsed.indexes[0].name).toBe('e2e-test');
+    expect(listParsed.indexes[0].files).toBe(1);
+    expect(listParsed.indexes[0].chunks).toBeGreaterThan(0);
 
     // 3. Search with JSON output
     const searchResult = await runSearchCommand('hello', {

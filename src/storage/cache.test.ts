@@ -6,7 +6,9 @@ import { randomUUID } from 'node:crypto';
 import {
   openEmbeddingCache,
   getEmbedding,
+  getEmbeddings,
   setEmbedding,
+  setEmbeddings,
   getCacheStats,
   clearCache,
   type EmbeddingCache,
@@ -106,6 +108,25 @@ describe('embedding cache', () => {
 
       const retrieved = await getEmbedding(cache, model, content);
       expect(Array.from(retrieved!)).toEqual(Array.from(vector2));
+    });
+
+    it('should batch store and retrieve embeddings', async () => {
+      await setEmbeddings(cache, 'test-model', [
+        { content: 'content-a', vector: new Float32Array([0.1, 0.2]) },
+        { content: 'content-b', vector: new Float32Array([0.3, 0.4]) },
+      ]);
+
+      const retrieved = await getEmbeddings(cache, 'test-model', [
+        'content-a',
+        'content-b',
+        'missing-content',
+      ]);
+
+      expect(retrieved.get('content-a')?.[0]).toBeCloseTo(0.1);
+      expect(retrieved.get('content-a')?.[1]).toBeCloseTo(0.2);
+      expect(retrieved.get('content-b')?.[0]).toBeCloseTo(0.3);
+      expect(retrieved.get('content-b')?.[1]).toBeCloseTo(0.4);
+      expect(retrieved.has('missing-content')).toBe(false);
     });
 
     it('should treat disabled cache as a cache miss and ignore writes', async () => {

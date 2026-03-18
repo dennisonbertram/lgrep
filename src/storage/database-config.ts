@@ -5,8 +5,9 @@ import { readR2Credentials, type R2Credentials } from './keychain.js';
 import { openDatabase, type IndexDatabase } from './lance.js';
 
 export interface DatabaseSettings {
-  mode: 'local' | 's3';
+  mode: 'local' | 's3' | 'postgres';
   uri: string;
+  displayUri?: string;
   storageOptions?: Record<string, string>;
 }
 
@@ -32,12 +33,24 @@ function loadConfigSync(): LgrepConfig {
   }
 }
 
-function getEnvValue(name: string): string | undefined {
-  const trimmed = name.trim();
+function getEnvValue(name?: string): string | undefined {
+  const trimmed = name?.trim();
   if (!trimmed) {
     return undefined;
   }
   return process.env[trimmed];
+}
+
+function getSanitizedPostgresUrl(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    url.username = '';
+    url.password = '';
+    url.search = '';
+    return url.toString();
+  } catch {
+    return 'postgres://<configured>';
+  }
 }
 
 function getEnvCredentials(config: LgrepConfig): R2Credentials | null {
@@ -128,6 +141,21 @@ async function resolveFromConfig(config: LgrepConfig): Promise<DatabaseSettings>
     };
   }
 
+  if (mergedConfig.storageMode === 'postgres') {
+    const databaseUrl = getEnvValue(mergedConfig.storageDatabaseUrlEnv);
+    if (!databaseUrl) {
+      throw new Error(
+        `storageDatabaseUrlEnv (${mergedConfig.storageDatabaseUrlEnv}) must point to a Postgres connection string when storageMode is "postgres"`
+      );
+    }
+
+    return {
+      mode: 'postgres',
+      uri: databaseUrl,
+      displayUri: getSanitizedPostgresUrl(databaseUrl),
+    };
+  }
+
   const storageUri = mergedConfig.storageUri.trim();
   if (!storageUri) {
     throw new Error('storageUri is required when storageMode is "s3"');
@@ -154,6 +182,21 @@ export function resolveDatabaseSettingsSync(): DatabaseSettings {
     };
   }
 
+  if (mergedConfig.storageMode === 'postgres') {
+    const databaseUrl = getEnvValue(mergedConfig.storageDatabaseUrlEnv);
+    if (!databaseUrl) {
+      throw new Error(
+        `storageDatabaseUrlEnv (${mergedConfig.storageDatabaseUrlEnv}) must point to a Postgres connection string when storageMode is "postgres"`
+      );
+    }
+
+    return {
+      mode: 'postgres',
+      uri: databaseUrl,
+      displayUri: getSanitizedPostgresUrl(databaseUrl),
+    };
+  }
+
   const storageUri = mergedConfig.storageUri.trim();
   if (!storageUri) {
     throw new Error('storageUri is required when storageMode is "s3"');
@@ -171,5 +214,6 @@ export async function openConfiguredDatabase(): Promise<IndexDatabase> {
 }
 
 export function getConfiguredDatabaseLocationSync(): string {
-  return resolveDatabaseSettingsSync().uri;
+  const settings = resolveDatabaseSettingsSync();
+  return settings.displayUri ?? settings.uri;
 }

@@ -63,7 +63,7 @@ export interface LgrepConfig {
   /** Number of files to process in parallel */
   parallelFiles: number;
   /** Storage backend for generated index data */
-  storageMode: 'local' | 's3';
+  storageMode: 'local' | 's3' | 'postgres';
   /** Remote database URI for S3-compatible backends */
   storageUri: string;
   /** Optional S3-compatible endpoint override (required for Cloudflare R2) */
@@ -80,6 +80,14 @@ export interface LgrepConfig {
   storageSecretKeyEnv: string;
   /** Environment variable name for the S3 session token */
   storageSessionTokenEnv: string;
+  /** Environment variable name for the Postgres database URL */
+  storageDatabaseUrlEnv: string;
+  /** Backend for the embedding cache */
+  cacheBackend: 'local' | 'postgres';
+  /** Environment variable name for the remote cache database URL */
+  cacheDatabaseUrlEnv: string;
+  /** Table name to use for the remote embedding cache */
+  cacheTableName: string;
   /** Whether the local embedding cache is enabled */
   cacheEnabled: boolean;
   /** Maximum number of cache entries to retain locally (0 = unlimited) */
@@ -116,6 +124,10 @@ export const DEFAULT_CONFIG: LgrepConfig = {
   storageAccessKeyEnv: 'AWS_ACCESS_KEY_ID',
   storageSecretKeyEnv: 'AWS_SECRET_ACCESS_KEY',
   storageSessionTokenEnv: 'AWS_SESSION_TOKEN',
+  storageDatabaseUrlEnv: 'LGREP_DATABASE_URL',
+  cacheBackend: 'local',
+  cacheDatabaseUrlEnv: 'LGREP_CACHE_DATABASE_URL',
+  cacheTableName: 'embedding_cache',
   cacheEnabled: true,
   cacheMaxEntries: 50000,
   cacheTtlHours: 0,

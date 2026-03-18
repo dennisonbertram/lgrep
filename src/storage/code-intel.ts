@@ -1,5 +1,93 @@
 import type { CodeSymbol, CodeDependency, CallEdge, SymbolKind, DependencyKind, ImportedName } from '../types/code-intel.js';
 import type { IndexDatabase } from './lance.js';
+import { getPostgresIndexTableName, quoteIdentifier, requirePostgresPool } from './postgres.js';
+
+function isPostgresDatabase(db: IndexDatabase): boolean {
+  return db.mode === 'postgres';
+}
+
+function getSymbolsTableName(db: IndexDatabase, indexName: string): string {
+  return isPostgresDatabase(db)
+    ? getPostgresIndexTableName(indexName, 'symbols')
+    : `${indexName}_symbols`;
+}
+
+function getDependenciesTableName(db: IndexDatabase, indexName: string): string {
+  return isPostgresDatabase(db)
+    ? getPostgresIndexTableName(indexName, 'dependencies')
+    : `${indexName}_dependencies`;
+}
+
+function getCallsTableName(db: IndexDatabase, indexName: string): string {
+  return isPostgresDatabase(db)
+    ? getPostgresIndexTableName(indexName, 'calls')
+    : `${indexName}_calls`;
+}
+
+function asBoolean(value: unknown): boolean {
+  return value === true || value === 1 || value === '1';
+}
+
+function mapSymbolRecord(record: Record<string, unknown>): CodeSymbol {
+  return {
+    id: record['id'] as string,
+    name: record['name'] as string,
+    kind: record['kind'] as SymbolKind,
+    filePath: record['file_path'] as string,
+    relativePath: record['relative_path'] as string,
+    range: {
+      start: {
+        line: record['line_start'] as number,
+        column: record['column_start'] as number,
+      },
+      end: {
+        line: record['line_end'] as number,
+        column: record['column_end'] as number,
+      },
+    },
+    isExported: asBoolean(record['is_exported']),
+    isDefaultExport: asBoolean(record['is_default_export']),
+    documentation: (record['documentation'] as string) || undefined,
+    signature: (record['signature'] as string) || undefined,
+    parentId: (record['parent_id'] as string) || undefined,
+    modifiers: JSON.parse((record['modifiers'] as string) || '[]') as string[],
+    summary: (record['summary'] as string) || undefined,
+    summaryModel: (record['summary_model'] as string) || undefined,
+    summaryGeneratedAt: (record['summary_generated_at'] as string) || undefined,
+    bodyHash: (record['body_hash'] as string) || undefined,
+  };
+}
+
+function mapDependencyRecord(record: Record<string, unknown>): CodeDependency {
+  return {
+    id: record['id'] as string,
+    sourceFile: record['source_file'] as string,
+    targetModule: record['target_module'] as string,
+    resolvedPath: (record['resolved_path'] as string) || undefined,
+    kind: record['kind'] as DependencyKind,
+    names: JSON.parse((record['names'] as string) || '[]') as ImportedName[],
+    line: record['line'] as number,
+    isExternal: asBoolean(record['is_external']),
+  };
+}
+
+function mapCallRecord(record: Record<string, unknown>): CallEdge {
+  return {
+    id: record['id'] as string,
+    callerId: (record['caller_id'] as string) || undefined,
+    callerFile: record['caller_file'] as string,
+    calleeName: record['callee_name'] as string,
+    calleeId: (record['callee_id'] as string) || undefined,
+    calleeFile: (record['callee_file'] as string) || undefined,
+    position: {
+      line: record['line'] as number,
+      column: record['column'] as number,
+    },
+    isMethodCall: asBoolean(record['is_method_call']),
+    receiver: (record['receiver'] as string) || undefined,
+    argumentCount: record['argument_count'] as number,
+  };
+}
 
 /**
  * Add symbols to the code intelligence storage.
@@ -11,7 +99,7 @@ export async function addSymbols(
 ): Promise<void> {
   if (symbols.length === 0) return;
 
-  const tableName = `${indexName}_symbols`;
+  const tableName = getSymbolsTableName(db, indexName);
   const records = symbols.map((symbol) => ({
     id: symbol.id,
     name: symbol.name,
@@ -36,11 +124,75 @@ export async function addSymbols(
     created_at: new Date().toISOString(),
   }));
 
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const values: string[] = [];
+    const params: unknown[] = [];
+
+    for (const record of records) {
+      const base = params.length;
+      params.push(
+        record.id,
+        record.name,
+        record.kind,
+        record.file_path,
+        record.relative_path,
+        record.line_start,
+        record.line_end,
+        record.column_start,
+        record.column_end,
+        record.is_exported,
+        record.is_default_export,
+        record.documentation,
+        record.signature,
+        record.parent_id,
+        record.modifiers,
+        record.summary,
+        record.summary_model,
+        record.summary_generated_at,
+        record.body_hash,
+        record.index_name,
+        record.created_at
+      );
+      values.push(
+        `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12}, $${base + 13}, $${base + 14}, $${base + 15}, $${base + 16}, $${base + 17}, $${base + 18}, $${base + 19}, $${base + 20}, $${base + 21})`
+      );
+    }
+
+    await pool.query(
+      `INSERT INTO ${quoteIdentifier(tableName)} (
+        id,
+        name,
+        kind,
+        file_path,
+        relative_path,
+        line_start,
+        line_end,
+        column_start,
+        column_end,
+        is_exported,
+        is_default_export,
+        documentation,
+        signature,
+        parent_id,
+        modifiers,
+        summary,
+        summary_model,
+        summary_generated_at,
+        body_hash,
+        index_name,
+        created_at
+      ) VALUES ${values.join(', ')}`,
+      params
+    );
+    return;
+  }
+
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
     await table.add(records);
   } catch {
-    await db.connection.createTable(tableName, records);
+    await db.connection!.createTable(tableName, records);
   }
 }
 
@@ -52,10 +204,32 @@ export async function getSymbols(
   indexName: string,
   options?: { kind?: SymbolKind; file?: string }
 ): Promise<CodeSymbol[]> {
-  const tableName = `${indexName}_symbols`;
+  const tableName = getSymbolsTableName(db, indexName);
+
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (options?.kind) {
+      params.push(options.kind);
+      clauses.push(`kind = $${params.length}`);
+    }
+    if (options?.file) {
+      params.push(options.file);
+      clauses.push(`file_path = $${params.length}`);
+    }
+
+    const whereClause = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+    const result = await pool.query<Record<string, unknown>>(
+      `SELECT * FROM ${quoteIdentifier(tableName)}${whereClause}`,
+      params
+    );
+    return result.rows.map(mapSymbolRecord);
+  }
 
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
     let query = table.query();
 
     if (options?.kind) {
@@ -67,33 +241,7 @@ export async function getSymbols(
 
     const results = await query.toArray();
 
-    return results.map((record: Record<string, unknown>) => ({
-      id: record['id'] as string,
-      name: record['name'] as string,
-      kind: record['kind'] as SymbolKind,
-      filePath: record['file_path'] as string,
-      relativePath: record['relative_path'] as string,
-      range: {
-        start: {
-          line: record['line_start'] as number,
-          column: record['column_start'] as number,
-        },
-        end: {
-          line: record['line_end'] as number,
-          column: record['column_end'] as number,
-        },
-      },
-      isExported: (record['is_exported'] as number) === 1,
-      isDefaultExport: (record['is_default_export'] as number) === 1,
-      documentation: record['documentation'] as string || undefined,
-      signature: record['signature'] as string || undefined,
-      parentId: record['parent_id'] as string || undefined,
-      modifiers: JSON.parse(record['modifiers'] as string) as string[],
-      summary: record['summary'] as string || undefined,
-      summaryModel: record['summary_model'] as string || undefined,
-      summaryGeneratedAt: record['summary_generated_at'] as string || undefined,
-      bodyHash: record['body_hash'] as string || undefined,
-    }));
+    return results.map((record: Record<string, unknown>) => mapSymbolRecord(record));
   } catch {
     return [];
   }
@@ -107,10 +255,20 @@ export async function searchSymbols(
   indexName: string,
   query: string
 ): Promise<CodeSymbol[]> {
-  const tableName = `${indexName}_symbols`;
+  const tableName = getSymbolsTableName(db, indexName);
+
+  if (isPostgresDatabase(db)) {
+    const result = await requirePostgresPool(db).query<Record<string, unknown>>(
+      `SELECT *
+         FROM ${quoteIdentifier(tableName)}
+        WHERE LOWER(name) LIKE $1`,
+      [`%${query.toLowerCase()}%`]
+    );
+    return result.rows.map(mapSymbolRecord);
+  }
 
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
     const allSymbols = await table.query().toArray();
 
     const queryLower = query.toLowerCase();
@@ -119,33 +277,7 @@ export async function searchSymbols(
       return name.toLowerCase().includes(queryLower);
     });
 
-    return matching.map((record: Record<string, unknown>) => ({
-      id: record['id'] as string,
-      name: record['name'] as string,
-      kind: record['kind'] as SymbolKind,
-      filePath: record['file_path'] as string,
-      relativePath: record['relative_path'] as string,
-      range: {
-        start: {
-          line: record['line_start'] as number,
-          column: record['column_start'] as number,
-        },
-        end: {
-          line: record['line_end'] as number,
-          column: record['column_end'] as number,
-        },
-      },
-      isExported: (record['is_exported'] as number) === 1,
-      isDefaultExport: (record['is_default_export'] as number) === 1,
-      documentation: record['documentation'] as string || undefined,
-      signature: record['signature'] as string || undefined,
-      parentId: record['parent_id'] as string || undefined,
-      modifiers: JSON.parse(record['modifiers'] as string) as string[],
-      summary: record['summary'] as string || undefined,
-      summaryModel: record['summary_model'] as string || undefined,
-      summaryGeneratedAt: record['summary_generated_at'] as string || undefined,
-      bodyHash: record['body_hash'] as string || undefined,
-    }));
+    return matching.map((record: Record<string, unknown>) => mapSymbolRecord(record));
   } catch {
     return [];
   }
@@ -159,10 +291,18 @@ export async function deleteSymbolsByFile(
   indexName: string,
   filePath: string
 ): Promise<void> {
-  const tableName = `${indexName}_symbols`;
+  const tableName = getSymbolsTableName(db, indexName);
+
+  if (isPostgresDatabase(db)) {
+    await requirePostgresPool(db).query(
+      `DELETE FROM ${quoteIdentifier(tableName)} WHERE file_path = $1`,
+      [filePath]
+    );
+    return;
+  }
 
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
     await table.delete(`file_path = '${filePath}'`);
   } catch {
     // Table doesn't exist, nothing to delete
@@ -179,7 +319,7 @@ export async function addDependencies(
 ): Promise<void> {
   if (deps.length === 0) return;
 
-  const tableName = `${indexName}_dependencies`;
+  const tableName = getDependenciesTableName(db, indexName);
   const records = deps.map((dep) => ({
     id: dep.id,
     source_file: dep.sourceFile,
@@ -193,11 +333,53 @@ export async function addDependencies(
     created_at: new Date().toISOString(),
   }));
 
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const values: string[] = [];
+    const params: unknown[] = [];
+
+    for (const record of records) {
+      const base = params.length;
+      params.push(
+        record.id,
+        record.source_file,
+        record.target_module,
+        record.resolved_path,
+        record.kind,
+        record.names,
+        record.line,
+        record.is_external,
+        record.index_name,
+        record.created_at
+      );
+      values.push(
+        `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`
+      );
+    }
+
+    await pool.query(
+      `INSERT INTO ${quoteIdentifier(tableName)} (
+        id,
+        source_file,
+        target_module,
+        resolved_path,
+        kind,
+        names,
+        line,
+        is_external,
+        index_name,
+        created_at
+      ) VALUES ${values.join(', ')}`,
+      params
+    );
+    return;
+  }
+
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
     await table.add(records);
   } catch {
-    await db.connection.createTable(tableName, records);
+    await db.connection!.createTable(tableName, records);
   }
 }
 
@@ -209,10 +391,32 @@ export async function getDependencies(
   indexName: string,
   options?: { file?: string; external?: boolean }
 ): Promise<CodeDependency[]> {
-  const tableName = `${indexName}_dependencies`;
+  const tableName = getDependenciesTableName(db, indexName);
+
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (options?.file) {
+      params.push(options.file);
+      clauses.push(`source_file = $${params.length}`);
+    }
+    if (options?.external !== undefined) {
+      params.push(options.external ? 1 : 0);
+      clauses.push(`is_external = $${params.length}`);
+    }
+
+    const whereClause = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+    const result = await pool.query<Record<string, unknown>>(
+      `SELECT * FROM ${quoteIdentifier(tableName)}${whereClause}`,
+      params
+    );
+    return result.rows.map(mapDependencyRecord);
+  }
 
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
     let query = table.query();
 
     if (options?.file) {
@@ -225,16 +429,7 @@ export async function getDependencies(
 
     const results = await query.toArray();
 
-    return results.map((record: Record<string, unknown>) => ({
-      id: record['id'] as string,
-      sourceFile: record['source_file'] as string,
-      targetModule: record['target_module'] as string,
-      resolvedPath: record['resolved_path'] as string || undefined,
-      kind: record['kind'] as DependencyKind,
-      names: JSON.parse(record['names'] as string) as ImportedName[],
-      line: record['line'] as number,
-      isExternal: (record['is_external'] as number) === 1,
-    }));
+    return results.map((record: Record<string, unknown>) => mapDependencyRecord(record));
   } catch {
     return [];
   }
@@ -278,10 +473,18 @@ export async function deleteDependenciesByFile(
   indexName: string,
   filePath: string
 ): Promise<void> {
-  const tableName = `${indexName}_dependencies`;
+  const tableName = getDependenciesTableName(db, indexName);
+
+  if (isPostgresDatabase(db)) {
+    await requirePostgresPool(db).query(
+      `DELETE FROM ${quoteIdentifier(tableName)} WHERE source_file = $1`,
+      [filePath]
+    );
+    return;
+  }
 
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
     await table.delete(`source_file = '${filePath}'`);
   } catch {
     // Table doesn't exist, nothing to delete
@@ -298,7 +501,7 @@ export async function addCalls(
 ): Promise<void> {
   if (calls.length === 0) return;
 
-  const tableName = `${indexName}_calls`;
+  const tableName = getCallsTableName(db, indexName);
   const records = calls.map((call) => ({
     id: call.id,
     caller_id: call.callerId ?? '',
@@ -315,11 +518,59 @@ export async function addCalls(
     created_at: new Date().toISOString(),
   }));
 
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const values: string[] = [];
+    const params: unknown[] = [];
+
+    for (const record of records) {
+      const base = params.length;
+      params.push(
+        record.id,
+        record.caller_id,
+        record.caller_file,
+        record.callee_name,
+        record.callee_id,
+        record.callee_file,
+        record.line,
+        record.column,
+        record.is_method_call,
+        record.receiver,
+        record.argument_count,
+        record.index_name,
+        record.created_at
+      );
+      values.push(
+        `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12}, $${base + 13})`
+      );
+    }
+
+    await pool.query(
+      `INSERT INTO ${quoteIdentifier(tableName)} (
+        id,
+        caller_id,
+        caller_file,
+        callee_name,
+        callee_id,
+        callee_file,
+        line,
+        "column",
+        is_method_call,
+        receiver,
+        argument_count,
+        index_name,
+        created_at
+      ) VALUES ${values.join(', ')}`,
+      params
+    );
+    return;
+  }
+
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
     await table.add(records);
   } catch {
-    await db.connection.createTable(tableName, records);
+    await db.connection!.createTable(tableName, records);
   }
 }
 
@@ -331,10 +582,32 @@ export async function getCalls(
   indexName: string,
   options?: { caller?: string; callee?: string }
 ): Promise<CallEdge[]> {
-  const tableName = `${indexName}_calls`;
+  const tableName = getCallsTableName(db, indexName);
+
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (options?.caller) {
+      params.push(options.caller);
+      clauses.push(`caller_id = $${params.length}`);
+    }
+    if (options?.callee) {
+      params.push(options.callee);
+      clauses.push(`callee_id = $${params.length}`);
+    }
+
+    const whereClause = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+    const result = await pool.query<Record<string, unknown>>(
+      `SELECT * FROM ${quoteIdentifier(tableName)}${whereClause}`,
+      params
+    );
+    return result.rows.map(mapCallRecord);
+  }
 
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
     let query = table.query();
 
     if (options?.caller) {
@@ -346,21 +619,7 @@ export async function getCalls(
 
     const results = await query.toArray();
 
-    return results.map((record: Record<string, unknown>) => ({
-      id: record['id'] as string,
-      callerId: record['caller_id'] as string || undefined,
-      callerFile: record['caller_file'] as string,
-      calleeName: record['callee_name'] as string,
-      calleeId: record['callee_id'] as string || undefined,
-      calleeFile: record['callee_file'] as string || undefined,
-      position: {
-        line: record['line'] as number,
-        column: record['column'] as number,
-      },
-      isMethodCall: (record['is_method_call'] as number) === 1,
-      receiver: record['receiver'] as string || undefined,
-      argumentCount: record['argument_count'] as number,
-    }));
+    return results.map((record: Record<string, unknown>) => mapCallRecord(record));
   } catch {
     return [];
   }
@@ -403,10 +662,18 @@ export async function deleteCallsByFile(
   indexName: string,
   filePath: string
 ): Promise<void> {
-  const tableName = `${indexName}_calls`;
+  const tableName = getCallsTableName(db, indexName);
+
+  if (isPostgresDatabase(db)) {
+    await requirePostgresPool(db).query(
+      `DELETE FROM ${quoteIdentifier(tableName)} WHERE caller_file = $1`,
+      [filePath]
+    );
+    return;
+  }
 
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
     await table.delete(`caller_file = '${filePath}'`);
   } catch {
     // Table doesn't exist, nothing to delete
@@ -420,11 +687,19 @@ export async function clearCodeIntel(
   db: IndexDatabase,
   indexName: string
 ): Promise<void> {
-  const tables = [`${indexName}_symbols`, `${indexName}_dependencies`, `${indexName}_calls`];
+  const tables = [
+    getSymbolsTableName(db, indexName),
+    getDependenciesTableName(db, indexName),
+    getCallsTableName(db, indexName),
+  ];
 
   for (const tableName of tables) {
     try {
-      await db.connection.dropTable(tableName);
+      if (isPostgresDatabase(db)) {
+        await requirePostgresPool(db).query(`DROP TABLE IF EXISTS ${quoteIdentifier(tableName)}`);
+      } else {
+        await db.connection!.dropTable(tableName);
+      }
     } catch {
       // Table doesn't exist, ignore
     }
@@ -439,7 +714,94 @@ export async function createCodeIntelTables(
   db: IndexDatabase,
   indexName: string
 ): Promise<void> {
-  const tableNames = await db.connection.tableNames();
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const symbolsTableName = quoteIdentifier(getSymbolsTableName(db, indexName));
+    const depsTableName = quoteIdentifier(getDependenciesTableName(db, indexName));
+    const callsTableName = quoteIdentifier(getCallsTableName(db, indexName));
+
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS ${symbolsTableName} (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        line_start INTEGER NOT NULL,
+        line_end INTEGER NOT NULL,
+        column_start INTEGER NOT NULL,
+        column_end INTEGER NOT NULL,
+        is_exported INTEGER NOT NULL,
+        is_default_export INTEGER NOT NULL,
+        documentation TEXT NOT NULL,
+        signature TEXT NOT NULL,
+        parent_id TEXT NOT NULL,
+        modifiers TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        summary_model TEXT NOT NULL,
+        summary_generated_at TEXT NOT NULL,
+        body_hash TEXT NOT NULL,
+        index_name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+      )`
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${getSymbolsTableName(db, indexName)}_name_idx`)}
+        ON ${symbolsTableName} (LOWER(name))`
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${getSymbolsTableName(db, indexName)}_file_idx`)}
+        ON ${symbolsTableName} (file_path)`
+    );
+
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS ${depsTableName} (
+        id TEXT PRIMARY KEY,
+        source_file TEXT NOT NULL,
+        target_module TEXT NOT NULL,
+        resolved_path TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        names TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        is_external INTEGER NOT NULL,
+        index_name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+      )`
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${getDependenciesTableName(db, indexName)}_source_idx`)}
+        ON ${depsTableName} (source_file)`
+    );
+
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS ${callsTableName} (
+        id TEXT PRIMARY KEY,
+        caller_id TEXT NOT NULL,
+        caller_file TEXT NOT NULL,
+        callee_name TEXT NOT NULL,
+        callee_id TEXT NOT NULL,
+        callee_file TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        "column" INTEGER NOT NULL,
+        is_method_call INTEGER NOT NULL,
+        receiver TEXT NOT NULL,
+        argument_count INTEGER NOT NULL,
+        index_name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+      )`
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${getCallsTableName(db, indexName)}_caller_idx`)}
+        ON ${callsTableName} (caller_id)`
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${getCallsTableName(db, indexName)}_callee_idx`)}
+        ON ${callsTableName} (callee_id)`
+    );
+    return;
+  }
+
+  const tableNames = await db.connection!.tableNames();
 
   // Create symbols table if it doesn't exist
   const symbolsTableName = `${indexName}_symbols`;
@@ -467,8 +829,8 @@ export async function createCodeIntelTables(
       index_name: indexName,
       created_at: new Date().toISOString(),
     };
-    await db.connection.createTable(symbolsTableName, [placeholder]);
-    const table = await db.connection.openTable(symbolsTableName);
+    await db.connection!.createTable(symbolsTableName, [placeholder]);
+    const table = await db.connection!.openTable(symbolsTableName);
     await table.delete("id = '__placeholder__'");
   }
 
@@ -487,8 +849,8 @@ export async function createCodeIntelTables(
       index_name: indexName,
       created_at: new Date().toISOString(),
     };
-    await db.connection.createTable(depsTableName, [placeholder]);
-    const table = await db.connection.openTable(depsTableName);
+    await db.connection!.createTable(depsTableName, [placeholder]);
+    const table = await db.connection!.openTable(depsTableName);
     await table.delete("id = '__placeholder__'");
   }
 
@@ -510,8 +872,8 @@ export async function createCodeIntelTables(
       index_name: indexName,
       created_at: new Date().toISOString(),
     };
-    await db.connection.createTable(callsTableName, [placeholder]);
-    const table = await db.connection.openTable(callsTableName);
+    await db.connection!.createTable(callsTableName, [placeholder]);
+    const table = await db.connection!.openTable(callsTableName);
     await table.delete("id = '__placeholder__'");
   }
 }
@@ -546,10 +908,26 @@ export async function updateSymbolSummary(
   summary: string,
   model: string
 ): Promise<void> {
-  const tableName = `${indexName}_symbols`;
+  const tableName = getSymbolsTableName(db, indexName);
+
+  if (isPostgresDatabase(db)) {
+    const result = await requirePostgresPool(db).query(
+      `UPDATE ${quoteIdentifier(tableName)}
+          SET summary = $1,
+              summary_model = $2,
+              summary_generated_at = $3
+        WHERE id = $4`,
+      [summary, model, new Date().toISOString(), symbolId]
+    );
+
+    if ((result.rowCount ?? 0) === 0) {
+      throw new Error(`Symbol with id ${symbolId} not found`);
+    }
+    return;
+  }
 
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
 
     // Get the current symbol
     const results = await table.query().where(`id = '${symbolId}'`).toArray();
@@ -586,10 +964,19 @@ export async function getSymbolsWithoutSummaries(
   db: IndexDatabase,
   indexName: string
 ): Promise<CodeSymbol[]> {
-  const tableName = `${indexName}_symbols`;
+  const tableName = getSymbolsTableName(db, indexName);
+
+  if (isPostgresDatabase(db)) {
+    const result = await requirePostgresPool(db).query<Record<string, unknown>>(
+      `SELECT *
+         FROM ${quoteIdentifier(tableName)}
+        WHERE summary = '' OR summary IS NULL`
+    );
+    return result.rows.map(mapSymbolRecord);
+  }
 
   try {
-    const table = await db.connection.openTable(tableName);
+    const table = await db.connection!.openTable(tableName);
     const results = await table.query().toArray();
 
     // Filter for symbols without summaries
@@ -598,33 +985,7 @@ export async function getSymbolsWithoutSummaries(
       return !summary || summary === '';
     });
 
-    return unsummarized.map((record: Record<string, unknown>) => ({
-      id: record['id'] as string,
-      name: record['name'] as string,
-      kind: record['kind'] as SymbolKind,
-      filePath: record['file_path'] as string,
-      relativePath: record['relative_path'] as string,
-      range: {
-        start: {
-          line: record['line_start'] as number,
-          column: record['column_start'] as number,
-        },
-        end: {
-          line: record['line_end'] as number,
-          column: record['column_end'] as number,
-        },
-      },
-      isExported: (record['is_exported'] as number) === 1,
-      isDefaultExport: (record['is_default_export'] as number) === 1,
-      documentation: record['documentation'] as string || undefined,
-      signature: record['signature'] as string || undefined,
-      parentId: record['parent_id'] as string || undefined,
-      modifiers: JSON.parse(record['modifiers'] as string) as string[],
-      summary: record['summary'] as string || undefined,
-      summaryModel: record['summary_model'] as string || undefined,
-      summaryGeneratedAt: record['summary_generated_at'] as string || undefined,
-      bodyHash: record['body_hash'] as string || undefined,
-    }));
+    return unsummarized.map((record: Record<string, unknown>) => mapSymbolRecord(record));
   } catch {
     return [];
   }

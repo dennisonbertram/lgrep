@@ -24,10 +24,10 @@ import {
 } from '../../storage/lance.js';
 import {
   openEmbeddingCache,
-  getEmbedding,
-  setEmbedding,
+  getEmbeddings,
+  setEmbeddings,
 } from '../../storage/cache.js';
-import { getCachePath } from '../utils/paths.js';
+import { resolveCacheSettings } from '../../storage/cache-config.js';
 import { createSpinner } from '../utils/progress.js';
 import { extractSymbols } from '../../core/ast/symbol-extractor.js';
 import { extractDependencies } from '../../core/ast/dependency-extractor.js';
@@ -113,13 +113,14 @@ export async function runIndexCommand(
 
     // Open database and cache
     spinner?.update('Opening database...');
-    const cachePath = getCachePath();
     const db = await openConfiguredDatabase();
     spinner?.update('Opening embedding cache...');
-    const cache = await openEmbeddingCache(cachePath, {
+    const cacheSettings = await resolveCacheSettings(config);
+    const cache = await openEmbeddingCache(cacheSettings.location, {
       enabled: config.cacheEnabled,
       maxEntries: config.cacheMaxEntries,
       ttlHours: config.cacheTtlHours,
+      settings: cacheSettings,
     });
 
     // Declare handle outside try block so it's accessible in catch for failure marking
@@ -244,6 +245,7 @@ export async function runIndexCommand(
       const parallelLimit = config.parallelFiles ?? 10;
       const embedBatchSize = config.embedBatchSize ?? 10;
       const dbBatchSize = config.dbBatchSize ?? 250;
+      const cacheLookupBatchSize = Math.max(embedBatchSize, dbBatchSize);
       
       // Skip cache for fresh indexes (mode='create') - cache won't have any hits anyway
       const skipCache = mode === 'create' && !options.retry;
@@ -318,6 +320,8 @@ export async function runIndexCommand(
         };
 
         const cachedDocumentChunks: Map<number, DocumentChunk[]> = new Map();
+        const uncachedChunks: UncachedChunk[] = [];
+        const cacheCandidates: UncachedChunk[] = [];
 
         // Initialize doc chunk arrays for each file
         for (let fileIndex = 0; fileIndex < chunkingResults.length; fileIndex++) {
@@ -327,61 +331,63 @@ export async function runIndexCommand(
           }
         }
 
-        // Check cache sequentially per file (to avoid overwhelming SQLite)
-        // Skip cache entirely for fresh indexes (huge speedup - cache is slow)
-        const uncachedPerFile = await Promise.all(
-          chunkingResults.map(async (result, fileIndex) => {
-            const fileUncached: UncachedChunk[] = [];
-            const docChunks = cachedDocumentChunks.get(fileIndex);
-            if (!docChunks) return fileUncached;
+        for (let fileIndex = 0; fileIndex < chunkingResults.length; fileIndex++) {
+          const result = chunkingResults[fileIndex];
+          const docChunks = cachedDocumentChunks.get(fileIndex);
+          if (!result || !docChunks) continue;
 
-            for (let chunkIndex = 0; chunkIndex < result.textChunks.length; chunkIndex++) {
-              const textChunk = result.textChunks[chunkIndex];
-              if (!textChunk) continue;
+          for (let chunkIndex = 0; chunkIndex < result.textChunks.length; chunkIndex++) {
+            const textChunk = result.textChunks[chunkIndex];
+            if (!textChunk) continue;
 
-              // Skip slow cache lookups for fresh indexes
-              if (skipCache) {
-                fileUncached.push({
-                  chunkContent: textChunk.content,
-                  fileIndex,
-                  chunkIndex,
-                  textChunk,
-                });
-                continue;
-              }
+            const candidate = {
+              chunkContent: textChunk.content,
+              fileIndex,
+              chunkIndex,
+              textChunk,
+            };
 
-              const cached = await getEmbedding(cache, embedClient.model, textChunk.content);
-
-              if (cached) {
-                docChunks[chunkIndex] = {
-                  id: randomUUID(),
-                  filePath: result.file.absolutePath,
-                  relativePath: result.file.relativePath,
-                  contentHash: result.contentHash,
-                  chunkIndex: textChunk.index,
-                  content: textChunk.content,
-                  vector: cached,
-                  lineStart: textChunk.startLine,
-                  lineEnd: textChunk.endLine,
-                  fileType: result.fileType,
-                  createdAt: new Date().toISOString(),
-                };
-              } else {
-                fileUncached.push({
-                  chunkContent: textChunk.content,
-                  fileIndex,
-                  chunkIndex,
-                  textChunk,
-                });
-              }
+            if (skipCache) {
+              uncachedChunks.push(candidate);
+              continue;
             }
 
-            return fileUncached;
-          })
-        );
+            cacheCandidates.push(candidate);
+          }
+        }
 
-        // Flatten all uncached chunks
-        const uncachedChunks = uncachedPerFile.flat();
+        for (let i = 0; i < cacheCandidates.length; i += cacheLookupBatchSize) {
+          const lookupBatch = cacheCandidates.slice(i, i + cacheLookupBatchSize);
+          const cachedEmbeddings = await getEmbeddings(
+            cache,
+            embedClient.model,
+            lookupBatch.map((candidate) => candidate.chunkContent)
+          );
+
+          for (const item of lookupBatch) {
+            const cached = cachedEmbeddings.get(item.chunkContent);
+            const chunkingResult = chunkingResults[item.fileIndex];
+            const docChunks = cachedDocumentChunks.get(item.fileIndex);
+
+            if (cached && chunkingResult && docChunks) {
+              docChunks[item.chunkIndex] = {
+                id: randomUUID(),
+                filePath: chunkingResult.file.absolutePath,
+                relativePath: chunkingResult.file.relativePath,
+                contentHash: chunkingResult.contentHash,
+                chunkIndex: item.textChunk.index,
+                content: item.chunkContent,
+                vector: cached,
+                lineStart: item.textChunk.startLine,
+                lineEnd: item.textChunk.endLine,
+                fileType: chunkingResult.fileType,
+                createdAt: new Date().toISOString(),
+              };
+            } else {
+              uncachedChunks.push(item);
+            }
+          }
+        }
 
         // Phase 4: Batch embed uncached chunks across all files in this batch
         for (let i = 0; i < uncachedChunks.length; i += embedBatchSize) {
@@ -390,6 +396,7 @@ export async function runIndexCommand(
 
           // Generate embeddings for the batch
           const embedResult = await embedClient.embed(contents);
+          const cacheWrites: Array<{ content: string; vector: Float32Array }> = [];
 
           // Store results and cache
           for (let j = 0; j < embedBatch.length; j++) {
@@ -405,8 +412,10 @@ export async function runIndexCommand(
             const chunkingResult = chunkingResults[item.fileIndex];
             if (!chunkingResult) continue;
 
-            // Cache the embedding
-            await setEmbedding(cache, embedClient.model, item.chunkContent, vector);
+            cacheWrites.push({
+              content: item.chunkContent,
+              vector,
+            });
 
             // Store the document chunk
             const docChunks = cachedDocumentChunks.get(item.fileIndex);
@@ -426,6 +435,8 @@ export async function runIndexCommand(
               };
             }
           }
+
+          await setEmbeddings(cache, embedClient.model, cacheWrites);
         }
 
         // Phase 5: Collect all chunks from this batch and add to pending

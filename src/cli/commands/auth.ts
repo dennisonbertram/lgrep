@@ -25,7 +25,7 @@ export interface AuthR2Result {
 
 export interface AuthStatusResult {
   success: boolean;
-  storageMode: 'local' | 's3';
+  storageMode: 'local' | 's3' | 'postgres';
   storageUri: string;
   endpoint: string;
   credentialSource: 'auto' | 'env' | 'keychain';

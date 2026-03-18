@@ -13,7 +13,7 @@ vi.mock('./keychain.js', () => ({
   readR2Credentials: readR2CredentialsMock,
 }));
 
-import { resolveDatabaseSettings } from './database-config.js';
+import { getConfiguredDatabaseLocationSync, resolveDatabaseSettings } from './database-config.js';
 
 describe('database config resolution', () => {
   let testHome: string;
@@ -77,6 +77,35 @@ describe('database config resolution', () => {
     });
 
     await expect(resolveDatabaseSettings()).rejects.toThrow(/storageUri/i);
+  });
+
+  it('resolves postgres settings from the configured database url env var', async () => {
+    process.env['LGREP_DATABASE_URL'] = 'postgres://db-user:secret@example.com:5432/lgrep?sslmode=require';
+
+    await saveConfig({
+      ...DEFAULT_CONFIG,
+      storageMode: 'postgres',
+      storageDatabaseUrlEnv: 'LGREP_DATABASE_URL',
+    });
+
+    const settings = await resolveDatabaseSettings();
+
+    expect(settings).toMatchObject({
+      mode: 'postgres',
+      uri: 'postgres://db-user:secret@example.com:5432/lgrep?sslmode=require',
+      displayUri: 'postgres://example.com:5432/lgrep',
+    });
+    expect(getConfiguredDatabaseLocationSync()).toBe('postgres://example.com:5432/lgrep');
+  });
+
+  it('throws when postgres mode is configured without a database url', async () => {
+    await saveConfig({
+      ...DEFAULT_CONFIG,
+      storageMode: 'postgres',
+      storageDatabaseUrlEnv: 'MISSING_DATABASE_URL',
+    });
+
+    await expect(resolveDatabaseSettings()).rejects.toThrow(/storageDatabaseUrlEnv/i);
   });
 
   it('falls back to keychain-backed credentials when configured', async () => {

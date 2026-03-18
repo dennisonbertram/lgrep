@@ -86,9 +86,13 @@ describe('config management', () => {
       expect(DEFAULT_CONFIG.storageUri).toBe('');
       expect(DEFAULT_CONFIG.storageCredentialSource).toBe('auto');
       expect(DEFAULT_CONFIG.storageProfile).toBe('default');
+      expect(DEFAULT_CONFIG.storageDatabaseUrlEnv).toBe('LGREP_DATABASE_URL');
     });
 
     it('should keep the embedding cache enabled locally by default', () => {
+      expect(DEFAULT_CONFIG.cacheBackend).toBe('local');
+      expect(DEFAULT_CONFIG.cacheDatabaseUrlEnv).toBe('LGREP_CACHE_DATABASE_URL');
+      expect(DEFAULT_CONFIG.cacheTableName).toBe('embedding_cache');
       expect(DEFAULT_CONFIG.cacheEnabled).toBe(true);
       expect(DEFAULT_CONFIG.cacheMaxEntries).toBe(50000);
       expect(DEFAULT_CONFIG.cacheTtlHours).toBe(0);
