@@ -1,7 +1,15 @@
 import * as lancedb from '@lancedb/lancedb';
 import { mkdir, rm, readdir, readFile, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Pool } from 'pg';
 import type { DatabaseSettings } from './database-config.js';
+import {
+  POSTGRES_INDEXES_TABLE,
+  getPostgresIndexTableName,
+  quoteIdentifier,
+  requirePostgresPool,
+  vectorToSql,
+} from './postgres.js';
 
 /**
  * Index metadata stored in LanceDB and shadowed to meta.json in local mode.
@@ -76,8 +84,9 @@ export interface SearchResult extends DocumentChunk {
  */
 export interface IndexDatabase {
   path: string;
-  mode: 'local' | 's3';
-  connection: lancedb.Connection;
+  mode: 'local' | 's3' | 'postgres';
+  connection: lancedb.Connection | null;
+  pool: Pool | null;
   tableExistence: Map<string, boolean>;
   close(): Promise<void>;
 }
@@ -93,6 +102,20 @@ const INDEX_TABLE_SUFFIXES = [
   'dependencies',
   'calls',
 ] as const;
+
+interface PostgresIndexMetadataRow {
+  index_name: string;
+  root_path: string;
+  status: 'building' | 'ready' | 'failed';
+  model: string;
+  model_dimensions: number;
+  created_at: string | Date;
+  updated_at: string | Date;
+  document_count: number;
+  chunk_count: number;
+  generation_id: number;
+  schema_version: number;
+}
 
 interface IndexMetadataRecord {
   name: string;
@@ -145,8 +168,153 @@ function recordToMetadata(record: Record<string, unknown>): IndexMetadata {
   };
 }
 
+function rowToMetadata(row: PostgresIndexMetadataRow): IndexMetadata {
+  return {
+    schemaVersion: row.schema_version,
+    name: row.index_name,
+    rootPath: row.root_path,
+    status: row.status,
+    model: row.model,
+    modelDimensions: row.model_dimensions,
+    createdAt: normalizeTimestamp(row.created_at),
+    updatedAt: normalizeTimestamp(row.updated_at),
+    documentCount: row.document_count,
+    chunkCount: row.chunk_count,
+    generationId: row.generation_id,
+  };
+}
+
+function isPostgresDatabase(db: IndexDatabase): boolean {
+  return db.mode === 'postgres';
+}
+
+function normalizeTimestamp(value: string | Date): string {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+function parseVectorValue(value: unknown): Float32Array {
+  if (value instanceof Float32Array) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return new Float32Array(value as number[]);
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const literal = trimmed.startsWith('[') ? trimmed.slice(1, -1) : trimmed;
+    if (!literal) {
+      return new Float32Array();
+    }
+    return new Float32Array(
+      literal.split(',').map((entry) => Number(entry.trim()))
+    );
+  }
+
+  return new Float32Array();
+}
+
 function getLegacyIndexDir(db: IndexDatabase, name: string): string {
   return join(db.path, name);
+}
+
+function getPostgresChunkTableName(indexName: string): string {
+  return getPostgresIndexTableName(indexName, 'chunks');
+}
+
+function getPostgresFileTableName(indexName: string): string {
+  return getPostgresIndexTableName(indexName, 'files');
+}
+
+function getKnownIndexTableNames(indexName: string, mode: IndexDatabase['mode'] = 'local'): string[] {
+  if (mode === 'postgres') {
+    return [
+      getPostgresChunkTableName(indexName),
+      getPostgresFileTableName(indexName),
+      getPostgresIndexTableName(indexName, 'symbols'),
+      getPostgresIndexTableName(indexName, 'dependencies'),
+      getPostgresIndexTableName(indexName, 'calls'),
+    ];
+  }
+
+  return INDEX_TABLE_SUFFIXES.map((suffix) => `${indexName}_${suffix}`);
+}
+
+async function ensurePostgresBaseTables(pool: Pool): Promise<void> {
+  try {
+    await pool.query('CREATE EXTENSION IF NOT EXISTS vector');
+  } catch (error) {
+    throw new Error(
+      `Failed to enable the pgvector extension. Ensure the "vector" extension is available for this database and the current user can enable it. Original error: ${error}`
+    );
+  }
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS ${quoteIdentifier(POSTGRES_INDEXES_TABLE)} (
+      index_name TEXT PRIMARY KEY,
+      root_path TEXT NOT NULL,
+      status TEXT NOT NULL,
+      model TEXT NOT NULL,
+      model_dimensions INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      document_count INTEGER NOT NULL,
+      chunk_count INTEGER NOT NULL,
+      generation_id INTEGER NOT NULL,
+      schema_version INTEGER NOT NULL
+    )`
+  );
+}
+
+async function ensurePostgresIndexTables(
+  pool: Pool,
+  metadata: IndexMetadata
+): Promise<void> {
+  const chunkTable = quoteIdentifier(getPostgresChunkTableName(metadata.name));
+  const fileTable = quoteIdentifier(getPostgresFileTableName(metadata.name));
+  const vectorDimensions = metadata.modelDimensions;
+  const chunkVectorIndex = quoteIdentifier(`${getPostgresChunkTableName(metadata.name)}_vector_idx`);
+  const chunkFileIndex = quoteIdentifier(`${getPostgresChunkTableName(metadata.name)}_file_idx`);
+  const filePathIndex = quoteIdentifier(`${getPostgresFileTableName(metadata.name)}_path_idx`);
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS ${chunkTable} (
+      id TEXT PRIMARY KEY,
+      file_path TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      vector vector(${vectorDimensions}) NOT NULL,
+      language TEXT,
+      line_start INTEGER,
+      line_end INTEGER,
+      file_type TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
+    )`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${chunkVectorIndex}
+      ON ${chunkTable}
+      USING hnsw (vector vector_cosine_ops)`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${chunkFileIndex}
+      ON ${chunkTable} (file_path, chunk_index)`
+  );
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS ${fileTable} (
+      file_path TEXT PRIMARY KEY,
+      content_hash TEXT NOT NULL,
+      chunk_count INTEGER NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+    )`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${filePathIndex}
+      ON ${fileTable} (file_path)`
+  );
 }
 
 async function writeLegacyMetadata(db: IndexDatabase, metadata: IndexMetadata): Promise<void> {
@@ -189,11 +357,27 @@ async function tableExists(db: IndexDatabase, tableName: string): Promise<boolea
     return cached;
   }
 
-  const tableNames = await db.connection.tableNames();
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const result = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+           FROM information_schema.tables
+          WHERE table_schema = current_schema()
+            AND table_name = $1
+       ) AS exists`,
+      [tableName]
+    );
+    const exists = result.rows[0]?.exists ?? false;
+    db.tableExistence.set(tableName, exists);
+    return exists;
+  }
+
+  const tableNames = await db.connection!.tableNames();
   let exists = tableNames.includes(tableName);
   if (!exists) {
     try {
-      await db.connection.openTable(tableName);
+      await db.connection!.openTable(tableName);
       exists = true;
     } catch {
       exists = false;
@@ -207,19 +391,24 @@ function rememberTable(db: IndexDatabase, tableName: string, exists: boolean): v
   db.tableExistence.set(tableName, exists);
 }
 
-function getKnownIndexTableNames(indexName: string): string[] {
-  return INDEX_TABLE_SUFFIXES.map((suffix) => `${indexName}_${suffix}`);
-}
-
 async function getMetadataTableIfExists(db: IndexDatabase): Promise<lancedb.Table | null> {
+  if (isPostgresDatabase(db)) {
+    return null;
+  }
+
   if (!(await tableExists(db, INDEX_METADATA_TABLE))) {
     return null;
   }
 
-  return await db.connection.openTable(INDEX_METADATA_TABLE);
+  return await db.connection!.openTable(INDEX_METADATA_TABLE);
 }
 
 async function ensureMetadataTable(db: IndexDatabase): Promise<lancedb.Table> {
+  if (isPostgresDatabase(db)) {
+    await ensurePostgresBaseTables(requirePostgresPool(db));
+    throw new Error('ensureMetadataTable is not used for Postgres databases');
+  }
+
   const table = await getMetadataTableIfExists(db);
   if (table) {
     return table;
@@ -239,15 +428,60 @@ async function ensureMetadataTable(db: IndexDatabase): Promise<lancedb.Table> {
     schema_version: CURRENT_SCHEMA_VERSION,
   };
 
-  await db.connection.createTable(INDEX_METADATA_TABLE, [placeholder]);
+  await db.connection!.createTable(INDEX_METADATA_TABLE, [placeholder]);
   rememberTable(db, INDEX_METADATA_TABLE, true);
 
-  const createdTable = await db.connection.openTable(INDEX_METADATA_TABLE);
+  const createdTable = await db.connection!.openTable(INDEX_METADATA_TABLE);
   await createdTable.delete("name = '__placeholder__'");
   return createdTable;
 }
 
 async function saveMetadata(db: IndexDatabase, metadata: IndexMetadata): Promise<void> {
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    await pool.query(
+      `INSERT INTO ${quoteIdentifier(POSTGRES_INDEXES_TABLE)} (
+        index_name,
+        root_path,
+        status,
+        model,
+        model_dimensions,
+        created_at,
+        updated_at,
+        document_count,
+        chunk_count,
+        generation_id,
+        schema_version
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (index_name)
+      DO UPDATE SET
+        root_path = EXCLUDED.root_path,
+        status = EXCLUDED.status,
+        model = EXCLUDED.model,
+        model_dimensions = EXCLUDED.model_dimensions,
+        created_at = EXCLUDED.created_at,
+        updated_at = EXCLUDED.updated_at,
+        document_count = EXCLUDED.document_count,
+        chunk_count = EXCLUDED.chunk_count,
+        generation_id = EXCLUDED.generation_id,
+        schema_version = EXCLUDED.schema_version`,
+      [
+        metadata.name,
+        metadata.rootPath,
+        metadata.status,
+        metadata.model,
+        metadata.modelDimensions,
+        metadata.createdAt,
+        metadata.updatedAt,
+        metadata.documentCount,
+        metadata.chunkCount,
+        metadata.generationId,
+        metadata.schemaVersion,
+      ]
+    );
+    return;
+  }
+
   const table = await ensureMetadataTable(db);
   await table.delete(`name = '${escapeSql(metadata.name)}'`);
   await table.add([metadataToRecord(metadata)]);
@@ -255,6 +489,18 @@ async function saveMetadata(db: IndexDatabase, metadata: IndexMetadata): Promise
 }
 
 async function getStoredMetadata(db: IndexDatabase, name: string): Promise<IndexMetadata | null> {
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const result = await pool.query<PostgresIndexMetadataRow>(
+      `SELECT *
+         FROM ${quoteIdentifier(POSTGRES_INDEXES_TABLE)}
+        WHERE index_name = $1
+        LIMIT 1`,
+      [name]
+    );
+    return result.rows[0] ? rowToMetadata(result.rows[0]) : null;
+  }
+
   const table = await getMetadataTableIfExists(db);
   if (table) {
     const results = await table
@@ -276,6 +522,16 @@ async function getStoredMetadata(db: IndexDatabase, name: string): Promise<Index
 }
 
 async function listStoredMetadata(db: IndexDatabase): Promise<IndexMetadata[]> {
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const result = await pool.query<PostgresIndexMetadataRow>(
+      `SELECT *
+         FROM ${quoteIdentifier(POSTGRES_INDEXES_TABLE)}
+        ORDER BY index_name ASC`
+    );
+    return result.rows.map(rowToMetadata);
+  }
+
   const table = await getMetadataTableIfExists(db);
   if (table) {
     const records = await table.query().toArray();
@@ -315,6 +571,24 @@ export async function openDatabase(
     ? { mode: 'local' as const, uri: dbPathOrSettings }
     : dbPathOrSettings;
 
+  if (settings.mode === 'postgres') {
+    const pool = new Pool({
+      connectionString: settings.uri,
+    });
+    await ensurePostgresBaseTables(pool);
+
+    return {
+      path: settings.uri,
+      mode: 'postgres',
+      connection: null,
+      pool,
+      tableExistence: new Map(),
+      close: async () => {
+        await pool.end();
+      },
+    };
+  }
+
   if (settings.mode === 'local') {
     await mkdir(settings.uri, { recursive: true });
   }
@@ -327,6 +601,7 @@ export async function openDatabase(
     path: settings.uri,
     mode: settings.mode,
     connection,
+    pool: null,
     tableExistence: new Map(),
     close: async () => {
       // LanceDB connections don't require explicit close
@@ -364,6 +639,9 @@ export async function createIndex(
   };
 
   await saveMetadata(db, metadata);
+  if (isPostgresDatabase(db)) {
+    await ensurePostgresIndexTables(requirePostgresPool(db), metadata);
+  }
 
   return {
     name: options.name,
@@ -408,15 +686,29 @@ export async function deleteIndex(
     await metadataTable.delete(`name = '${escapeSql(name)}'`);
   }
 
-  const tableNames = await db.connection.tableNames();
-  const candidateTables = new Set([
-    ...tableNames.filter((tableName) => tableName.startsWith(`${name}_`)),
-    ...getKnownIndexTableNames(name),
-  ]);
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    await pool.query(
+      `DELETE FROM ${quoteIdentifier(POSTGRES_INDEXES_TABLE)}
+        WHERE index_name = $1`,
+      [name]
+    );
+  }
+
+  const candidateTables = isPostgresDatabase(db)
+    ? new Set(getKnownIndexTableNames(name, 'postgres'))
+    : new Set([
+        ...(await db.connection!.tableNames()).filter((tableName) => tableName.startsWith(`${name}_`)),
+        ...getKnownIndexTableNames(name),
+      ]);
 
   for (const tableName of candidateTables) {
     try {
-      await db.connection.dropTable(tableName);
+      if (isPostgresDatabase(db)) {
+        await requirePostgresPool(db).query(`DROP TABLE IF EXISTS ${quoteIdentifier(tableName)}`);
+      } else {
+        await db.connection!.dropTable(tableName);
+      }
     } catch {
       // Ignore missing tables to keep delete idempotent across backends
     }
@@ -476,9 +768,9 @@ function chunkToRecord(chunk: DocumentChunk): Record<string, unknown> {
  * Convert a LanceDB record to a DocumentChunk.
  */
 function recordToChunk(record: Record<string, unknown>): DocumentChunk {
-  const language = record['language'] as string;
-  const lineStart = record['line_start'] as number;
-  const lineEnd = record['line_end'] as number;
+  const language = record['language'];
+  const lineStart = record['line_start'];
+  const lineEnd = record['line_end'];
 
   return {
     id: record['id'] as string,
@@ -487,10 +779,10 @@ function recordToChunk(record: Record<string, unknown>): DocumentChunk {
     contentHash: record['content_hash'] as string,
     chunkIndex: record['chunk_index'] as number,
     content: record['content'] as string,
-    vector: new Float32Array(record['vector'] as number[]),
-    language: language === '' ? undefined : language,
-    lineStart: lineStart === -1 ? undefined : lineStart,
-    lineEnd: lineEnd === -1 ? undefined : lineEnd,
+    vector: parseVectorValue(record['vector']),
+    language: typeof language === 'string' && language !== '' ? language : undefined,
+    lineStart: typeof lineStart === 'number' && lineStart !== -1 ? lineStart : undefined,
+    lineEnd: typeof lineEnd === 'number' && lineEnd !== -1 ? lineEnd : undefined,
     fileType: record['file_type'] as string,
     createdAt: record['created_at'] as string,
   };
@@ -506,17 +798,65 @@ export async function addChunks(
 ): Promise<number> {
   if (chunks.length === 0) return 0;
 
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    await ensurePostgresIndexTables(pool, handle.metadata);
+    const tableName = quoteIdentifier(getPostgresChunkTableName(handle.name));
+    const values: string[] = [];
+    const params: unknown[] = [];
+
+    for (const chunk of chunks) {
+      const base = params.length;
+      params.push(
+        chunk.id,
+        chunk.filePath,
+        chunk.relativePath,
+        chunk.contentHash,
+        chunk.chunkIndex,
+        chunk.content,
+        vectorToSql(chunk.vector),
+        chunk.language ?? null,
+        chunk.lineStart ?? null,
+        chunk.lineEnd ?? null,
+        chunk.fileType,
+        chunk.createdAt
+      );
+      values.push(
+        `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}::vector, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12})`
+      );
+    }
+
+    await pool.query(
+      `INSERT INTO ${tableName} (
+        id,
+        file_path,
+        relative_path,
+        content_hash,
+        chunk_index,
+        content,
+        vector,
+        language,
+        line_start,
+        line_end,
+        file_type,
+        created_at
+      ) VALUES ${values.join(', ')}`,
+      params
+    );
+    return chunks.length;
+  }
+
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
   const records = chunks.map(chunkToRecord);
 
   try {
     // Try to open existing table and add
-    const table = await db.connection.openTable(fullTableName);
+    const table = await db.connection!.openTable(fullTableName);
     await table.add(records);
     rememberTable(db, fullTableName, true);
   } catch {
     // Table doesn't exist, create it with the first batch
-    await db.connection.createTable(fullTableName, records);
+    await db.connection!.createTable(fullTableName, records);
     rememberTable(db, fullTableName, true);
   }
 
@@ -532,12 +872,45 @@ export async function searchChunks(
   queryVector: Float32Array,
   options: SearchOptions
 ): Promise<SearchResult[]> {
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const tableName = quoteIdentifier(getPostgresChunkTableName(handle.name));
+    const result = await pool.query<Record<string, unknown>>(
+      `SELECT
+         id,
+         file_path,
+         relative_path,
+         content_hash,
+         chunk_index,
+         content,
+         vector::text AS vector,
+         language,
+         line_start,
+         line_end,
+         file_type,
+         created_at::text AS created_at,
+         (vector <=> $1::vector) AS _distance
+       FROM ${tableName}
+       ORDER BY vector <=> $1::vector
+       LIMIT $2`,
+      [vectorToSql(queryVector), options.limit]
+    );
+
+    return result.rows.map((row) => {
+      const chunk = recordToChunk(row);
+      return {
+        ...chunk,
+        _score: Number(row['_distance'] ?? 0),
+      };
+    });
+  }
+
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
   if (!(await tableExists(db, fullTableName))) {
     return [];
   }
 
-  const table = await db.connection.openTable(fullTableName);
+  const table = await db.connection!.openTable(fullTableName);
   const query = table.query().nearestTo(Array.from(queryVector));
   const results = await query
     .distanceType('cosine')
@@ -560,28 +933,71 @@ export async function getChunkCount(
   db: IndexDatabase,
   handle: IndexHandle
 ): Promise<number> {
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const result = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM ${quoteIdentifier(getPostgresChunkTableName(handle.name))}`
+    );
+    return Number(result.rows[0]?.count ?? '0');
+  }
+
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
   if (!(await tableExists(db, fullTableName))) {
     return 0;
   }
 
-  const table = await db.connection.openTable(fullTableName);
+  const table = await db.connection!.openTable(fullTableName);
   return await table.countRows();
 }
 
 /**
- * Update the status of an index and sync chunk count.
+ * Get the number of unique files tracked by an index.
+ */
+export async function getDocumentCount(
+  db: IndexDatabase,
+  handle: IndexHandle
+): Promise<number> {
+  const metadataHashes = await getFileMetadataHashes(db, handle);
+  if (metadataHashes.size > 0) {
+    return metadataHashes.size;
+  }
+
+  if (isPostgresDatabase(db)) {
+    const result = await requirePostgresPool(db).query<{ count: string }>(
+      `SELECT COUNT(DISTINCT file_path)::text AS count
+         FROM ${quoteIdentifier(getPostgresChunkTableName(handle.name))}`
+    );
+    return Number(result.rows[0]?.count ?? '0');
+  }
+
+  const fullTableName = `${handle.name}_${TABLE_NAME}`;
+  if (!(await tableExists(db, fullTableName))) {
+    return 0;
+  }
+
+  const table = await db.connection!.openTable(fullTableName);
+  const records = await table.query().select(['file_path']).toArray();
+  return new Set(records.map((record) => record['file_path'] as string)).size;
+}
+
+/**
+ * Update the status of an index and sync chunk and file counts.
  */
 export async function updateIndexStatus(
   db: IndexDatabase,
   handle: IndexHandle,
   status: 'building' | 'ready' | 'failed'
 ): Promise<void> {
-  const chunkCount = await getChunkCount(db, handle);
+  const [chunkCount, documentCount] = await Promise.all([
+    getChunkCount(db, handle),
+    getDocumentCount(db, handle),
+  ]);
 
   const metadata: IndexMetadata = {
     ...handle.metadata,
     status,
+    documentCount,
     chunkCount,
     updatedAt: new Date().toISOString(),
   };
@@ -599,12 +1015,23 @@ export async function getFileContentHashes(
   db: IndexDatabase,
   handle: IndexHandle
 ): Promise<Map<string, string>> {
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const result = await pool.query<{ file_path: string; content_hash: string }>(
+      `SELECT DISTINCT ON (file_path) file_path, content_hash
+         FROM ${quoteIdentifier(getPostgresChunkTableName(handle.name))}
+        ORDER BY file_path, chunk_index ASC`
+    );
+
+    return new Map(result.rows.map((row) => [row.file_path, row.content_hash]));
+  }
+
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
   if (!(await tableExists(db, fullTableName))) {
     return new Map();
   }
 
-  const table = await db.connection.openTable(fullTableName);
+  const table = await db.connection!.openTable(fullTableName);
 
   // Query distinct file paths and their content hashes
   // We use a simple approach: get all records and deduplicate in memory
@@ -633,12 +1060,36 @@ export async function getChunksByFilePath(
   handle: IndexHandle,
   filePath: string
 ): Promise<DocumentChunk[]> {
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const result = await pool.query<Record<string, unknown>>(
+      `SELECT
+         id,
+         file_path,
+         relative_path,
+         content_hash,
+         chunk_index,
+         content,
+         vector::text AS vector,
+         language,
+         line_start,
+         line_end,
+         file_type,
+         created_at::text AS created_at
+       FROM ${quoteIdentifier(getPostgresChunkTableName(handle.name))}
+       WHERE file_path = $1
+       ORDER BY chunk_index ASC`,
+      [filePath]
+    );
+    return result.rows.map(recordToChunk);
+  }
+
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
   if (!(await tableExists(db, fullTableName))) {
     return [];
   }
 
-  const table = await db.connection.openTable(fullTableName);
+  const table = await db.connection!.openTable(fullTableName);
 
   // Query for all chunks matching this file path
   const records = await table
@@ -662,12 +1113,32 @@ export async function deleteChunksByFilePath(
   handle: IndexHandle,
   filePath: string
 ): Promise<number> {
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const countResult = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM ${quoteIdentifier(getPostgresChunkTableName(handle.name))}
+        WHERE file_path = $1`,
+      [filePath]
+    );
+    const count = Number(countResult.rows[0]?.count ?? '0');
+    if (count === 0) {
+      return 0;
+    }
+    await pool.query(
+      `DELETE FROM ${quoteIdentifier(getPostgresChunkTableName(handle.name))}
+        WHERE file_path = $1`,
+      [filePath]
+    );
+    return count;
+  }
+
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
   if (!(await tableExists(db, fullTableName))) {
     return 0;
   }
 
-  const table = await db.connection.openTable(fullTableName);
+  const table = await db.connection!.openTable(fullTableName);
 
   // First, count how many chunks we're deleting
   const existingChunks = await getChunksByFilePath(db, handle, filePath);
@@ -691,6 +1162,18 @@ export async function deleteAllChunks(
   db: IndexDatabase,
   handle: IndexHandle
 ): Promise<number> {
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const count = await getChunkCount(db, handle);
+    if (count === 0) {
+      return 0;
+    }
+    await pool.query(
+      `TRUNCATE TABLE ${quoteIdentifier(getPostgresChunkTableName(handle.name))}`
+    );
+    return count;
+  }
+
   const fullTableName = `${handle.name}_${TABLE_NAME}`;
   if (!(await tableExists(db, fullTableName))) {
     return 0;
@@ -704,11 +1187,11 @@ export async function deleteAllChunks(
 
   // Delete all chunks by dropping and recreating table
   // This is more efficient than deleting row by row
-  await db.connection.dropTable(fullTableName);
+  await db.connection!.dropTable(fullTableName);
   rememberTable(db, fullTableName, false);
 
   // Recreate empty table with same schema
-  await db.connection.createTable(fullTableName, [
+  await db.connection!.createTable(fullTableName, [
     {
       id: '',
       file_path: '',
@@ -726,7 +1209,7 @@ export async function deleteAllChunks(
   rememberTable(db, fullTableName, true);
 
   // Delete the placeholder row
-  const table = await db.connection.openTable(fullTableName);
+  const table = await db.connection!.openTable(fullTableName);
   await table.delete("id = ''");
 
   return count;
@@ -740,6 +1223,11 @@ export async function createFileMetadataTable(
   db: IndexDatabase,
   handle: IndexHandle
 ): Promise<void> {
+  if (isPostgresDatabase(db)) {
+    await ensurePostgresIndexTables(requirePostgresPool(db), handle.metadata);
+    return;
+  }
+
   const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
   if (await tableExists(db, fullTableName)) {
     // Table already exists
@@ -754,11 +1242,11 @@ export async function createFileMetadataTable(
     updated_at: new Date().toISOString(),
   };
 
-  await db.connection.createTable(fullTableName, [placeholder]);
+  await db.connection!.createTable(fullTableName, [placeholder]);
   rememberTable(db, fullTableName, true);
 
   // Delete the placeholder
-  const table = await db.connection.openTable(fullTableName);
+  const table = await db.connection!.openTable(fullTableName);
   await table.delete("file_path = '__placeholder__'");
 }
 
@@ -774,12 +1262,31 @@ export async function upsertFileMetadata(
   contentHash: string,
   chunkCount: number
 ): Promise<void> {
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    await pool.query(
+      `INSERT INTO ${quoteIdentifier(getPostgresFileTableName(handle.name))} (
+        file_path,
+        content_hash,
+        chunk_count,
+        updated_at
+      ) VALUES ($1, $2, $3, $4)
+      ON CONFLICT (file_path)
+      DO UPDATE SET
+        content_hash = EXCLUDED.content_hash,
+        chunk_count = EXCLUDED.chunk_count,
+        updated_at = EXCLUDED.updated_at`,
+      [filePath, contentHash, chunkCount, new Date().toISOString()]
+    );
+    return;
+  }
+
   const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
   if (!(await tableExists(db, fullTableName))) {
     throw new Error(`File metadata table does not exist for index "${handle.name}"`);
   }
 
-  const table = await db.connection.openTable(fullTableName);
+  const table = await db.connection!.openTable(fullTableName);
 
   // Check if file already exists
   const existing = await table
@@ -812,6 +1319,15 @@ export async function getFileMetadataHashes(
   db: IndexDatabase,
   handle: IndexHandle
 ): Promise<Map<string, string>> {
+  if (isPostgresDatabase(db)) {
+    const pool = requirePostgresPool(db);
+    const result = await pool.query<{ file_path: string; content_hash: string }>(
+      `SELECT file_path, content_hash
+         FROM ${quoteIdentifier(getPostgresFileTableName(handle.name))}`
+    );
+    return new Map(result.rows.map((row) => [row.file_path, row.content_hash]));
+  }
+
   const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
   if (!(await tableExists(db, fullTableName))) {
     // Metadata table doesn't exist - return empty map
@@ -819,7 +1335,7 @@ export async function getFileMetadataHashes(
     return new Map();
   }
 
-  const table = await db.connection.openTable(fullTableName);
+  const table = await db.connection!.openTable(fullTableName);
   const records = await table.query().select(['file_path', 'content_hash']).toArray();
 
   const hashMap = new Map<string, string>();
@@ -840,13 +1356,22 @@ export async function deleteFileMetadata(
   handle: IndexHandle,
   filePath: string
 ): Promise<void> {
+  if (isPostgresDatabase(db)) {
+    await requirePostgresPool(db).query(
+      `DELETE FROM ${quoteIdentifier(getPostgresFileTableName(handle.name))}
+        WHERE file_path = $1`,
+      [filePath]
+    );
+    return;
+  }
+
   const fullTableName = `${handle.name}_${FILE_METADATA_TABLE_SUFFIX}`;
   if (!(await tableExists(db, fullTableName))) {
     // Table doesn't exist - nothing to delete
     return;
   }
 
-  const table = await db.connection.openTable(fullTableName);
+  const table = await db.connection!.openTable(fullTableName);
   await table.delete(`file_path = '${filePath.replace(/'/g, "''")}'`);
 }
 

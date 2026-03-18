@@ -2,29 +2,69 @@
 
 ## Overview
 
-lgrep can store generated index data in an S3-compatible object store instead of the local `db` directory under `LGREP_HOME`.
+lgrep now supports two cloud layouts:
 
-Phase 1 keeps the embedding cache local. Only the index database moves remote.
+1. Preferred: managed Postgres for both the vector index and the embedding cache.
+2. Optional: S3/R2 for the index plus Postgres for the embedding cache.
 
-Recommended backend:
+The preferred layout is simpler and usually the better default:
 
-- Cloudflare R2 Standard for active indexes
+- one backend instead of two
+- `pgvector` for semantic search
+- normal Postgres tables for metadata, code-intel rows, and the cache
+- less local disk usage without introducing object storage into the hot path
 
 ## What moves remote
 
-- Index metadata
-- Chunk tables
-- Code-intelligence tables
+With the Postgres-first layout, these all move off the local machine:
 
-What stays local by default:
+- index metadata
+- chunk embeddings and chunk content
+- code-intelligence tables
+- embedding cache rows
+
+What stays local:
 
 - `config.json`
 - first-run state
-- embedding cache
 
-## Cloudflare R2 setup
+## Preferred setup: Postgres for index and cache
 
-Create an R2 bucket and an API token with read/write access to that bucket. Then export credentials:
+Create or use a Postgres database with the `vector` extension available. Many managed providers expose this as `pgvector`.
+
+Export a connection string:
+
+```bash
+export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
+```
+
+Configure lgrep to use Postgres for the index:
+
+```bash
+lgrep config set storageMode postgres
+lgrep config set storageDatabaseUrlEnv LGREP_DATABASE_URL
+```
+
+Point the embedding cache at the same database:
+
+```bash
+lgrep config set cacheBackend postgres
+lgrep config set cacheDatabaseUrlEnv LGREP_DATABASE_URL
+lgrep config set cacheTableName embedding_cache
+```
+
+Notes:
+
+- lgrep creates its index, metadata, and cache tables automatically.
+- lgrep will attempt `CREATE EXTENSION IF NOT EXISTS vector` on startup.
+- If your database user cannot enable extensions, enable `vector` ahead of time and reuse that database.
+- The cache is a keyed lookup table, not a vector-search table.
+
+## Optional alternative: S3/R2 for the index
+
+If you still want object storage for the index, keep `storageMode = s3` and use Postgres only for the cache.
+
+Create an R2 bucket and an API token with read/write access to that bucket, then export credentials:
 
 ```bash
 export R2_ACCESS_KEY_ID="..."
@@ -48,9 +88,7 @@ Optional session token env override:
 lgrep config set storageSessionTokenEnv AWS_SESSION_TOKEN
 ```
 
-## Local install setup
-
-For a machine-local lgrep install shared by coding agents on the same machine, prefer the keychain-backed auth flow over repo-local `.env` files:
+For a machine-local install shared by coding agents on the same machine, prefer the keychain-backed auth flow over repo-local `.env` files:
 
 ```bash
 export AWS_ACCESS_KEY_ID="..."
@@ -61,17 +99,11 @@ lgrep auth r2 \
   --endpoint https://<account-id>.r2.cloudflarestorage.com
 ```
 
-This stores the R2 credentials in the local macOS keychain and updates the global lgrep config to use:
-
-- `storageMode = s3`
-- `storageCredentialSource = keychain`
-- `storageProfile = default`
-
-After that, local coding agents can use the same lgrep install without depending on a repo-specific `.env`.
+This stores the R2 credentials in the local macOS keychain and updates the global lgrep config to use keychain-backed S3/R2 access.
 
 ## Cache policy
 
-The embedding cache remains local for indexing performance. You can tune or disable it:
+The embedding cache can be local or Postgres-backed. You can tune or disable it:
 
 ```bash
 lgrep config set cacheEnabled true
@@ -87,29 +119,33 @@ Notes:
 
 ## Migrating from local storage
 
-Phase 1 migration is reindex-based. Existing local indexes are not copied automatically.
+Migration is reindex-based. Existing local indexes are not copied automatically, and local cache entries are not backfilled into Postgres.
 
 Recommended flow:
 
 ```bash
-# 1. Point lgrep at remote storage
-lgrep config set storageMode s3
-lgrep config set storageUri s3://my-r2-bucket/lgrep
-lgrep config set storageEndpoint https://<account-id>.r2.cloudflarestorage.com
-lgrep config set storageRegion auto
+# 1. Point lgrep at Postgres
+export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
+lgrep config set storageMode postgres
+lgrep config set storageDatabaseUrlEnv LGREP_DATABASE_URL
 
-# 2. Reindex the repo into remote storage
+# 2. Point the embedding cache at Postgres
+lgrep config set cacheBackend postgres
+lgrep config set cacheDatabaseUrlEnv LGREP_DATABASE_URL
+lgrep config set cacheTableName embedding_cache
+
+# 3. Reindex the repo into Postgres
 lgrep index /path/to/repo --name my-project
 
-# 3. Verify the remote index
+# 4. Verify the remote index
 lgrep list
 lgrep stats --index my-project
 lgrep search "entry point" --index my-project
 
-# 4. Remove the old local index if you no longer need it
+# 5. Remove the old local index if you no longer need it
 lgrep config set storageMode local
 lgrep delete my-project
-lgrep config set storageMode s3
+lgrep config set storageMode postgres
 ```
 
 ## Rollback to local storage
@@ -120,13 +156,17 @@ Switch configuration back to local mode:
 lgrep config set storageMode local
 lgrep config set storageUri ""
 lgrep config set storageEndpoint ""
+lgrep config set cacheBackend local
 ```
 
-After rollback, local indexes continue to work as before. Remote indexes remain in object storage until you explicitly delete them while `storageMode` points at the remote backend.
+After rollback, local indexes continue to work as before. Remote indexes remain in whichever backend you were using last until you explicitly delete them while `storageMode` points at that backend, and remote cache rows remain in Postgres until you remove them yourself.
 
 ## Operational notes
 
 - `stats` only reports database directory size in local mode.
 - `doctor` and `clean` now query the storage layer instead of assuming a local `db` directory.
 - The MCP server uses the same storage config resolution as the CLI.
+- The Postgres index and the Postgres cache can share one database or use separate databases.
+- The remote cache currently uses environment-variable configuration for the Postgres connection string.
+- S3/R2 remains supported, but it is now the secondary path rather than the default recommendation.
 - This layout is currently single-tenant. If lgrep becomes an external or hosted product, we will need tenant isolation for prefixes, metadata, credentials, and write coordination.

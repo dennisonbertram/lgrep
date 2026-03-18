@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { runListCommand } from './list.js';
-import { openDatabase, createIndex } from '../../storage/lance.js';
+import { addChunks, createIndex, openDatabase, type DocumentChunk } from '../../storage/lance.js';
 
 describe('list command', () => {
   let testDir: string;
@@ -74,5 +74,40 @@ describe('list command', () => {
     const output = await runListCommand();
 
     expect(output).toContain('building');
+  });
+
+  it('hydrates file counts for json output when metadata is stale', async () => {
+    const dbPath = join(testDir, 'db');
+    const db = await openDatabase(dbPath);
+
+    const handle = await createIndex(db, {
+      name: 'json-index',
+      rootPath: '/json-test',
+      model: 'test-model',
+      modelDimensions: 4,
+    });
+
+    const chunk: DocumentChunk = {
+      id: randomUUID(),
+      filePath: '/json-test/file.ts',
+      relativePath: 'file.ts',
+      contentHash: 'hash-1',
+      chunkIndex: 0,
+      content: 'export function test() {}',
+      vector: new Float32Array([0.1, 0.2, 0.3, 0.4]),
+      fileType: '.ts',
+      createdAt: new Date().toISOString(),
+    };
+
+    await addChunks(db, handle, [chunk]);
+    await db.close();
+
+    const output = await runListCommand(true);
+    const parsed = JSON.parse(output) as { indexes: Array<{ name: string; files: number; chunks: number }> };
+    const jsonIndex = parsed.indexes.find((index) => index.name === 'json-index');
+
+    expect(jsonIndex).toBeDefined();
+    expect(jsonIndex?.files).toBe(1);
+    expect(jsonIndex?.chunks).toBe(1);
   });
 });

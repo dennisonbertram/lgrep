@@ -36,12 +36,16 @@ export {
 export {
   openEmbeddingCache,
   getEmbedding,
+  getEmbeddings,
   setEmbedding,
+  setEmbeddings,
   getCacheStats,
   clearCache,
   type EmbeddingCache,
   type CacheStats,
+  type CachedEmbedding,
 } from './storage/cache.js';
+export { resolveCacheSettings, type CacheSettings } from './storage/cache-config.js';
 
 // CLI utilities
 export { getLgrepHome, getDbPath, getConfigPath, getCachePath, getIndexPath, getIndexMetaPath } from './cli/utils/paths.js';

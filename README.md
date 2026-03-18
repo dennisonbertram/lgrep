@@ -332,23 +332,32 @@ lgrep config set summarizationModel anthropic:claude-3-5-haiku-latest
 
 ### Remote Storage
 
-lgrep can store generated indexes in an S3-compatible object store instead of the local `db` directory. Cloudflare R2 is the intended first backend.
+The preferred cloud architecture is Postgres for both the search index and the embedding cache:
+
+- `pgvector` stores chunk embeddings for semantic search.
+- regular Postgres tables store metadata, code-intel rows, and the embedding cache.
+
+You can point both layers at the same managed Postgres database:
 
 ```bash
-export R2_ACCESS_KEY_ID="..."
-export R2_SECRET_ACCESS_KEY="..."
+export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
 
-lgrep config set storageMode s3
-lgrep config set storageUri s3://my-r2-bucket/lgrep
-lgrep config set storageEndpoint https://<account-id>.r2.cloudflarestorage.com
-lgrep config set storageRegion auto
-lgrep config set storageAccessKeyEnv R2_ACCESS_KEY_ID
-lgrep config set storageSecretKeyEnv R2_SECRET_ACCESS_KEY
+lgrep config set storageMode postgres
+lgrep config set storageDatabaseUrlEnv LGREP_DATABASE_URL
+
+lgrep config set cacheBackend postgres
+lgrep config set cacheDatabaseUrlEnv LGREP_DATABASE_URL
+lgrep config set cacheTableName embedding_cache
 ```
 
-The embedding cache stays local in phase 1. You can tune it with `cacheEnabled`, `cacheMaxEntries`, and `cacheTtlHours`.
+Notes:
 
-For a machine-local install, use the auth flow instead of a repo `.env`:
+- The Postgres index backend requires the `vector` extension.
+- lgrep will create its tables automatically on first use.
+- The cache is still a keyed lookup table, not a vector-search table.
+- You can keep the cache local if you want an L1 cache on a single machine.
+
+S3/R2 is still supported as an optional alternative backend for indexes, but it is no longer the recommended default. If you want that path for cost or compatibility reasons, use `storageMode = s3` and the R2 auth flow:
 
 ```bash
 export AWS_ACCESS_KEY_ID="..."
@@ -359,9 +368,7 @@ lgrep auth r2 \
   --endpoint https://<account-id>.r2.cloudflarestorage.com
 ```
 
-That stores credentials in the local macOS keychain and switches the global lgrep config to keychain-backed R2 access.
-
-See [docs/guides/remote-storage.md](docs/guides/remote-storage.md) for setup, migration, and rollback details.
+See [docs/guides/remote-storage.md](docs/guides/remote-storage.md) for the full Postgres setup, migration, rollback, and the optional S3/R2 variant.
 
 ## Multi-Provider Support
 
@@ -476,6 +483,10 @@ Override with `LGREP_HOME` environment variable.
   "storageUri": "",
   "storageEndpoint": "",
   "storageRegion": "auto",
+  "storageDatabaseUrlEnv": "LGREP_DATABASE_URL",
+  "cacheBackend": "local",
+  "cacheDatabaseUrlEnv": "LGREP_CACHE_DATABASE_URL",
+  "cacheTableName": "embedding_cache",
   "cacheEnabled": true,
   "cacheMaxEntries": 50000,
   "cacheTtlHours": 0,
@@ -493,6 +504,8 @@ OLLAMA_HOST         # Ollama server URL
 AWS_ACCESS_KEY_ID   # Default S3-compatible access key env name for remote storage
 AWS_SECRET_ACCESS_KEY
 AWS_SESSION_TOKEN
+LGREP_DATABASE_URL  # Postgres URL for the remote index backend
+LGREP_CACHE_DATABASE_URL # Postgres URL for remote embedding cache
 
 # Embedding providers (priority: OpenAI > Cohere > Voyage > Ollama)
 OPENAI_API_KEY      # OpenAI API key (embeddings + LLM)
