@@ -1,5 +1,9 @@
 # lgrep
 
+<p align="center">
+  <img src="assets/hero.png" alt="lgrep — semantic code search" width="100%" />
+</p>
+
 **Grep understands text. lgrep understands code.**
 
 Search for "authentication logic" and find your OAuth handlers, JWT validation, and session management — even when those words never appear in the source. Ask "what happens if I change setScore" and see the full blast radius before you touch a line.
