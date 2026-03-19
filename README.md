@@ -1,7 +1,7 @@
 # lgrep
 
 <p align="center">
-  <img src="assets/hero.png" alt="lgrep — semantic code search" width="100%" />
+  <img src="assets/hero-mural-v2.png" alt="lgrep — semantic code search" width="100%" />
 </p>
 
 **Grep understands text. lgrep understands code.**
