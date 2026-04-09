@@ -113,6 +113,10 @@ vi.mock('pg', () => {
     async query(sql: string, params: unknown[] = []) {
       const normalized = sql.replace(/\s+/g, ' ').trim();
 
+      if (normalized.startsWith('SELECT pg_advisory_lock') || normalized.startsWith('SELECT pg_advisory_unlock')) {
+        return { rows: [] };
+      }
+
       if (normalized.startsWith('CREATE EXTENSION')) {
         return { rows: [] };
       }
@@ -325,6 +329,13 @@ vi.mock('pg', () => {
       }
 
       throw new Error(`Unhandled SQL in mock pool: ${normalized}`);
+    }
+
+    async connect() {
+      return {
+        query: this.query.bind(this),
+        release: () => undefined,
+      };
     }
 
     async end() {

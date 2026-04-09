@@ -11,6 +11,7 @@ import { runWatchCommand } from './commands/watch.js';
 import { runStopCommand } from './commands/stop.js';
 import { runSetupCommand } from './commands/setup.js';
 import { runInstallCommand } from './commands/install.js';
+import { runInitCommand } from './commands/init.js';
 import { runCallersCommand } from './commands/callers.js';
 import { runDeadCommand } from './commands/dead.js';
 import { runSimilarCommand } from './commands/similar.js';
@@ -53,6 +54,11 @@ import {
 } from './commands/project.js';
 import { runServerStartCommand, runServerStatusCommand } from './commands/server.js';
 import { runGcCommand } from './commands/gc.js';
+import {
+  runProfileCreateCommand,
+  runProfileListCommand,
+  runProfileUseCommand,
+} from './commands/profile.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { detectIndexForDirectory } from './utils/auto-detect.js';
 import { deleteIndex } from '../storage/lance.js';
@@ -63,7 +69,7 @@ const program = new Command();
 
 program
   .name('lgrep')
-  .description('Local semantic search CLI - privacy-first, mixedbread.ai quality without the cloud')
+  .description('Semantic code search CLI with local and Postgres-backed cloud profiles')
   .version('0.1.0');
 
 // Setup command - installs Ollama and pulls required models
@@ -125,6 +131,87 @@ program
       }
       console.log(`  ${result.healthCheckPassed ? '✓' : '✗'} Health check passed`);
       console.log('\nlgrep is ready to use!');
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+program
+  .command('init')
+  .description('Guided setup for local or cloud lgrep profiles')
+  .option('--mode <mode>', 'Storage mode to configure (local or cloud)')
+  .option('--profile <name>', 'Profile name to configure')
+  .option('--embedding <provider>', 'Local embedding mode (auto, openai, ollama)')
+  .option('--integrate <target>', 'Install integration target (none, claude, codex, mcp, all)')
+  .option('--database-url-env <name>', 'Environment variable name for the Postgres connection string', 'LGREP_DATABASE_URL')
+  .option('--database-url <url>', 'Postgres connection string for this session only')
+  .option('--index-current', 'Index the current directory after setup')
+  .option('--skip-index', 'Do not index the current directory')
+  .option('-y, --yes', 'Accept defaults for interactive prompts')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: {
+    mode?: 'local' | 'cloud';
+    profile?: string;
+    embedding?: 'auto' | 'openai' | 'ollama';
+    integrate?: 'none' | 'claude' | 'codex' | 'mcp' | 'all';
+    databaseUrlEnv?: string;
+    databaseUrl?: string;
+    indexCurrent?: boolean;
+    skipIndex?: boolean;
+    yes?: boolean;
+    json?: boolean;
+  }) => {
+    try {
+      const result = await runInitCommand({
+        mode: options.mode,
+        profile: options.profile,
+        embedding: options.embedding,
+        integration: options.integrate,
+        databaseUrlEnv: options.databaseUrlEnv,
+        databaseUrl: options.databaseUrl,
+        indexCurrent: options.indexCurrent,
+        skipIndex: options.skipIndex,
+        yes: options.yes,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(`\nSetup failed: ${result.error}`);
+        process.exit(1);
+      }
+
+      console.log('\nInitialization complete!');
+      console.log(`  Profile: ${result.profile}`);
+      console.log(`  Mode: ${result.mode}`);
+      console.log(`  Config: ${result.configPath}`);
+      if (result.integration !== 'none') {
+        console.log(`  Integration: ${result.integration}`);
+      }
+      if (result.indexName && result.indexAction !== 'skipped') {
+        console.log(`  Index: ${result.indexName} (${result.indexAction})`);
+      }
+
+      if (result.notes.length > 0) {
+        console.log('\nNotes:');
+        for (const note of result.notes) {
+          console.log(`  - ${note}`);
+        }
+      }
+
+      console.log('\nVerify with:');
+      for (const command of result.verificationCommands) {
+        console.log(`  ${command}`);
+      }
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));
@@ -475,6 +562,86 @@ program
     try {
       const output = await runConfigCommand(key, value, options.json);
       console.log(output);
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+const profileCmd = program
+  .command('profile')
+  .description('Manage named local or cloud lgrep profiles');
+
+profileCmd
+  .command('create <name>')
+  .description('Create a new profile')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name: string, options: { json?: boolean }) => {
+    try {
+      const result = await runProfileCreateCommand(name);
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log(`${result.created ? 'Created' : 'Profile already exists'}: ${result.profile}`);
+      console.log(`  Path: ${result.path}`);
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+profileCmd
+  .command('list')
+  .description('List available profiles')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    try {
+      const result = await runProfileListCommand();
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log('Profiles:\n');
+      for (const profile of result.profiles) {
+        const marker = profile.isActive ? '*' : ' ';
+        console.log(`${marker} ${profile.name}`);
+        console.log(`    Path: ${profile.path}`);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+profileCmd
+  .command('use <name>')
+  .description('Switch the active profile')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name: string, options: { json?: boolean }) => {
+    try {
+      const result = await runProfileUseCommand(name);
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log(`Active profile: ${result.profile}`);
+      console.log(`  Path: ${result.path}`);
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));
@@ -1163,27 +1330,33 @@ program
 // Install command - integrates lgrep with Claude Code
 program
   .command('install')
-  .description('Install lgrep integration with Claude Code')
+  .description('Install lgrep integration for Claude, Codex, or MCP')
+  .option('-t, --target <target>', 'Integration target (claude, codex, mcp, all)', 'claude')
   .option('--skip-skill', 'Do not create the skill')
   .option('--skip-hook', 'Do not add SessionStart hook')
   .option('--add-to-claude-md', 'Also add lgrep section to ~/.claude/CLAUDE.md')
   .option('--add-to-project', 'Also add lgrep section to project CLAUDE.md')
+  .option('-f, --force', 'Overwrite existing MCP configuration when target includes mcp')
   .option('-y, --yes', 'Skip confirmation prompts')
   .option('-j, --json', 'Output as JSON')
   .action(async (options: {
+    target?: 'claude' | 'codex' | 'mcp' | 'all';
     skipSkill?: boolean;
     skipHook?: boolean;
     addToClaudeMd?: boolean;
     addToProject?: boolean;
+    force?: boolean;
     yes?: boolean;
     json?: boolean;
   }) => {
     try {
       const result = await runInstallCommand({
+        target: options.target,
         skipSkill: options.skipSkill,
         skipHook: options.skipHook,
         addToClaudeMd: options.addToClaudeMd,
         addToProject: options.addToProject,
+        force: options.force,
         yes: options.yes,
         json: options.json,
       });
@@ -1200,18 +1373,23 @@ program
 
       // Success output
       console.log('\nInstallation complete!');
+      console.log(`  Target: ${result.target}`);
 
-      if (!options.skipSkill) {
+      if ((result.targetsApplied.includes('claude')) && !options.skipSkill) {
         if (result.skillCreated) {
           console.log(`  ✓ Skill created at ${result.skillPath}`);
+        } else if (result.skillUpdated) {
+          console.log(`  ✓ Skill updated at ${result.skillPath}`);
         } else if (result.skillAlreadyExists) {
           console.log(`  ○ Skill already exists at ${result.skillPath}`);
         }
       }
 
-      if (!options.skipHook) {
+      if (result.targetsApplied.includes('claude') && !options.skipHook) {
         if (result.hookAdded) {
           console.log(`  ✓ SessionStart hook added to ${result.settingsPath}`);
+        } else if (result.hookUpdated) {
+          console.log(`  ✓ SessionStart hook updated in ${result.settingsPath}`);
         } else if (result.hookAlreadyExists) {
           console.log(`  ○ SessionStart hook already exists in ${result.settingsPath}`);
         }
@@ -1233,8 +1411,23 @@ program
         }
       }
 
-      console.log('\nlgrep is now integrated with Claude Code!');
-      console.log('Claude will now know to use lgrep for code search and analysis.');
+      if (result.targetsApplied.includes('codex')) {
+        if (result.codexProjectUpdated) {
+          console.log(`  ✓ AGENTS.md updated at ${result.codexProjectPath}`);
+        } else if (result.codexProjectAlreadyHasLgrep) {
+          console.log(`  ○ AGENTS.md already has lgrep guidance at ${result.codexProjectPath}`);
+        }
+      }
+
+      if (result.targetsApplied.includes('mcp')) {
+        if (result.mcpConfigured) {
+          console.log(`  ✓ MCP configured in ${result.mcpSettingsPath}`);
+        } else if (result.mcpAlreadyConfigured) {
+          console.log(`  ○ MCP already configured in ${result.mcpSettingsPath}`);
+        }
+      }
+
+      console.log('\nlgrep integration is ready.');
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));

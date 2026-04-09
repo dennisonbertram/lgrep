@@ -29,6 +29,7 @@ describe('install command', () => {
   const mockSkillTemplate = '---\nname: lgrep-search\n---\n# lgrep skill';
   const mockHookTemplate = '#!/bin/bash\necho "lgrep-check"';
   const mockClaudeMdTemplate = '## lgrep\n\nInstructions here';
+  const mockAgentsTemplate = '## lgrep\n\nUse semantic code search here';
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -48,6 +49,9 @@ describe('install command', () => {
       }
       if (pathStr.includes('templates/claude-md-section.md')) {
         return Promise.resolve(mockClaudeMdTemplate);
+      }
+      if (pathStr.includes('templates/agents-md-section.md')) {
+        return Promise.resolve(mockAgentsTemplate);
       }
       return Promise.reject(new Error('ENOENT'));
     });
@@ -466,6 +470,30 @@ describe('install command', () => {
 
       expect(result.success).toBe(true);
       expect(result.projectClaudeUpdated).toBe(false);
+    });
+  });
+
+  describe('targeted installs', () => {
+    it('should install codex guidance without touching Claude integration', async () => {
+      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+      const result = await runInstallCommand({
+        target: 'codex',
+        json: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.targetsApplied).toEqual(['codex']);
+      expect(result.codexProjectUpdated).toBe(true);
+      expect(result.skillCreated).toBe(false);
+      expect(result.hookAdded).toBe(false);
+
+      const writeCall = vi.mocked(fs.writeFile).mock.calls.find(
+        (call) => call[0].toString().endsWith('AGENTS.md')
+      );
+      expect(writeCall).toBeDefined();
+      expect(writeCall![1]).toContain('## lgrep');
     });
   });
 

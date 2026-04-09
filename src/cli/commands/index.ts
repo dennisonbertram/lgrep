@@ -331,6 +331,7 @@ export async function runIndexCommand(
           db,
           allContentHashes,
           embedClient.model,
+          dimensions,
           {
             chunkMaxTokens: config.chunkSize,
             chunkOverlap: config.chunkOverlap,
@@ -375,6 +376,7 @@ export async function runIndexCommand(
             db,
             sharedLookupHashes,
             embedClient.model,
+            dimensions,
             {
               chunkMaxTokens: config.chunkSize,
               chunkOverlap: config.chunkOverlap,
@@ -550,7 +552,7 @@ export async function runIndexCommand(
               const batch = pendingChunks.splice(0, dbBatchSize);
               await addChunks(db, handle, batch);
               // Dual-write to shared content-addressable store
-              await addSharedChunks(db, embedClient.model, batch, {
+              await addSharedChunks(db, embedClient.model, dimensions, batch, {
                 chunkMaxTokens: config.chunkSize,
                 chunkOverlap: config.chunkOverlap,
               });
@@ -658,7 +660,7 @@ export async function runIndexCommand(
       if (pendingChunks.length > 0) {
         await addChunks(db, handle, pendingChunks);
         // Dual-write to shared content-addressable store
-        await addSharedChunks(db, embedClient.model, pendingChunks, {
+        await addSharedChunks(db, embedClient.model, dimensions, pendingChunks, {
           chunkMaxTokens: config.chunkSize,
           chunkOverlap: config.chunkOverlap,
         });

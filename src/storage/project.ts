@@ -422,14 +422,17 @@ export async function getProjectStats(
   // Unique chunks in the shared store for this project's content hashes
   const sc = quoteIdentifier('lgrep_shared_chunks');
   const uniqueChunksResult = await pool.query<{ count: string }>(
-    `SELECT COUNT(*) AS count
-       FROM ${sc}
-      WHERE content_hash IN (
-        SELECT DISTINCT wm.content_hash
-          FROM ${wm} wm
-          JOIN ${wt} w ON wm.worktree_id = w.id
-         WHERE w.project_id = $1
-      )`,
+    `SELECT COUNT(DISTINCT (sc.content_hash, sc.chunk_index, sc.model, sc.model_dims, sc.chunk_max_tokens, sc.chunk_overlap)) AS count
+       FROM ${sc} sc
+       JOIN ${wm} wm
+         ON wm.content_hash = sc.content_hash
+       JOIN ${wt} w
+         ON wm.worktree_id = w.id
+      WHERE w.project_id = $1
+        AND sc.model = w.model
+        AND sc.model_dims = w.model_dims
+        AND sc.chunk_max_tokens = w.chunk_max_tokens
+        AND sc.chunk_overlap = w.chunk_overlap`,
     [projectId],
   );
   const uniqueChunks = parseInt(uniqueChunksResult.rows[0]?.count ?? '0', 10);

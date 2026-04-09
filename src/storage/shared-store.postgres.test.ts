@@ -4,6 +4,7 @@ interface SharedChunkRow {
   content_hash: string;
   chunk_index: number;
   model: string;
+  model_dims: number;
   chunk_max_tokens: number;
   chunk_overlap: number;
   content: string;
@@ -131,11 +132,19 @@ vi.mock('pg', () => {
     async query(sql: string, params: unknown[] = []) {
       const normalized = sql.replace(/\s+/g, ' ').trim();
 
+      if (normalized.startsWith('SELECT pg_advisory_lock') || normalized.startsWith('SELECT pg_advisory_unlock')) {
+        return { rows: [] };
+      }
+
       if (normalized.startsWith('CREATE EXTENSION')) {
         return { rows: [] };
       }
 
       if (normalized.startsWith('CREATE INDEX')) {
+        return { rows: [] };
+      }
+
+      if (normalized.startsWith('DROP INDEX IF EXISTS')) {
         return { rows: [] };
       }
 
@@ -150,6 +159,19 @@ vi.mock('pg', () => {
       }
 
       if (normalized.startsWith('ALTER TABLE "lgrep_shared_chunks" ADD COLUMN IF NOT EXISTS')) {
+        return { rows: [] };
+      }
+
+      if (normalized.startsWith('UPDATE "lgrep_shared_chunks" SET model_dims = vector_dims(vector)')) {
+        for (const row of state.sharedChunks) {
+          if (!row.model_dims) {
+            row.model_dims = parseVectorLiteral(row.vector).length;
+          }
+        }
+        return { rows: [] };
+      }
+
+      if (normalized.startsWith('ALTER TABLE "lgrep_shared_chunks" ALTER COLUMN model_dims SET NOT NULL')) {
         return { rows: [] };
       }
 
@@ -197,20 +219,21 @@ vi.mock('pg', () => {
 
       // Shared chunks INSERT ... ON CONFLICT DO NOTHING
       if (normalized.startsWith('INSERT INTO "lgrep_shared_chunks"') && normalized.includes('ON CONFLICT')) {
-        for (let index = 0; index < params.length; index += 12) {
+        for (let index = 0; index < params.length; index += 13) {
           const row: SharedChunkRow = {
             content_hash: params[index] as string,
             chunk_index: params[index + 1] as number,
             model: params[index + 2] as string,
-            chunk_max_tokens: params[index + 3] as number,
-            chunk_overlap: params[index + 4] as number,
-            content: params[index + 5] as string,
-            vector: params[index + 6] as string,
-            language: params[index + 7] as string | null,
-            line_start: params[index + 8] as number | null,
-            line_end: params[index + 9] as number | null,
-            file_type: params[index + 10] as string,
-            created_at: params[index + 11] as string,
+            model_dims: params[index + 3] as number,
+            chunk_max_tokens: params[index + 4] as number,
+            chunk_overlap: params[index + 5] as number,
+            content: params[index + 6] as string,
+            vector: params[index + 7] as string,
+            language: params[index + 8] as string | null,
+            line_start: params[index + 9] as number | null,
+            line_end: params[index + 10] as number | null,
+            file_type: params[index + 11] as string,
+            created_at: params[index + 12] as string,
           };
           // ON CONFLICT DO NOTHING: skip if exists
           const exists = state.sharedChunks.some(
@@ -218,6 +241,7 @@ vi.mock('pg', () => {
               existing.content_hash === row.content_hash &&
               existing.chunk_index === row.chunk_index &&
               existing.model === row.model &&
+              existing.model_dims === row.model_dims &&
               existing.chunk_max_tokens === row.chunk_max_tokens &&
               existing.chunk_overlap === row.chunk_overlap
           );
@@ -235,6 +259,7 @@ vi.mock('pg', () => {
         !normalized.startsWith('SELECT DISTINCT content_hash')
       ) {
         const hasModelFilter = normalized.includes('AND model =');
+        const hasModelDimsFilter = normalized.includes('AND model_dims =');
         const hasChunkConfigFilter = normalized.includes('chunk_max_tokens =') && normalized.includes('chunk_overlap =');
         let hashParamsEnd = params.length;
         if (hasChunkConfigFilter) hashParamsEnd -= 2;
@@ -244,6 +269,8 @@ vi.mock('pg', () => {
               chunkOverlap: params[params.length - 1] as number,
             }
           : undefined;
+        const modelDims = hasModelDimsFilter ? (params[hashParamsEnd - 1] as number) : undefined;
+        if (hasModelDimsFilter) hashParamsEnd -= 1;
         const model = hasModelFilter ? (params[hashParamsEnd - 1] as string) : undefined;
         if (hasModelFilter) hashParamsEnd -= 1;
         const hashParams = params.slice(0, hashParamsEnd);
@@ -253,6 +280,9 @@ vi.mock('pg', () => {
         );
         if (model) {
           rows = rows.filter((row) => row.model === model);
+        }
+        if (modelDims != null) {
+          rows = rows.filter((row) => row.model_dims === modelDims);
         }
         if (chunkConfig) {
           rows = rows.filter(
@@ -276,16 +306,18 @@ vi.mock('pg', () => {
         normalized.includes('SELECT DISTINCT content_hash') &&
         normalized.includes('FROM "lgrep_shared_chunks"')
       ) {
-        const model = params[params.length - 3] as string;
+        const model = params[params.length - 4] as string;
+        const modelDims = params[params.length - 3] as number;
         const chunkMaxTokens = params[params.length - 2] as number;
         const chunkOverlap = params[params.length - 1] as number;
-        const hashes = params.slice(0, -3) as string[];
+        const hashes = params.slice(0, -4) as string[];
 
         const matchingHashes = new Set<string>();
         for (const row of state.sharedChunks) {
           if (
             hashes.includes(row.content_hash) &&
             row.model === model &&
+            row.model_dims === modelDims &&
             row.chunk_max_tokens === chunkMaxTokens &&
             row.chunk_overlap === chunkOverlap
           ) {
@@ -300,10 +332,12 @@ vi.mock('pg', () => {
       // Shared chunks vector search
       if (
         normalized.includes('FROM "lgrep_shared_chunks"') &&
-        normalized.includes('ORDER BY vector <=> $1::vector')
+        normalized.includes('ORDER BY vector::vector(')
       ) {
         const queryVector = parseVectorLiteral(params[0] as string);
         const limit = params[params.length - 1] as number;
+        const dimsMatch = normalized.match(/model_dims = (\d+)/);
+        const modelDims = dimsMatch ? Number(dimsMatch[1]) : undefined;
 
         let rows = [...state.sharedChunks];
         let filterParams = params.slice(1, -1);
@@ -321,6 +355,10 @@ vi.mock('pg', () => {
           const model = filterParams[0] as string;
           rows = rows.filter((row) => row.model === model);
           filterParams = filterParams.slice(1);
+        }
+
+        if (modelDims != null) {
+          rows = rows.filter((row) => row.model_dims === modelDims);
         }
 
         // Apply hash filter if present
@@ -453,6 +491,13 @@ vi.mock('pg', () => {
       throw new Error(`Unhandled SQL in mock pool: ${normalized}`);
     }
 
+    async connect() {
+      return {
+        query: this.query.bind(this),
+        release: () => undefined,
+      };
+    }
+
     async end() {
       return undefined;
     }
@@ -532,11 +577,11 @@ describe('shared content-addressable store (postgres)', () => {
       ];
 
       // Insert first time
-      await addSharedChunks(db, 'test-model', chunks, defaultChunkConfig);
+      await addSharedChunks(db, 'test-model', 4, chunks, defaultChunkConfig);
       expect(state.sharedChunks).toHaveLength(1);
 
       // Insert again with same content hash - should deduplicate
-      await addSharedChunks(db, 'test-model', [
+      await addSharedChunks(db, 'test-model', 4, [
         {
           ...chunks[0]!,
           id: 'chunk-1-duplicate',
@@ -546,15 +591,25 @@ describe('shared content-addressable store (postgres)', () => {
       expect(state.sharedChunks).toHaveLength(1);
 
       // Insert with different model - should NOT deduplicate
-      await addSharedChunks(db, 'different-model', chunks, defaultChunkConfig);
+      await addSharedChunks(db, 'different-model', 4, chunks, defaultChunkConfig);
       expect(state.sharedChunks).toHaveLength(2);
 
+      // Insert with different dimensions - should NOT deduplicate
+      await addSharedChunks(db, 'test-model', 3, [
+        {
+          ...chunks[0]!,
+          id: 'chunk-1-3d',
+          vector: new Float32Array([0.9, 0.1, 0.0]),
+        },
+      ], defaultChunkConfig);
+      expect(state.sharedChunks).toHaveLength(3);
+
       // Insert with different chunk config - should NOT deduplicate
-      await addSharedChunks(db, 'test-model', chunks, {
+      await addSharedChunks(db, 'test-model', 4, chunks, {
         chunkMaxTokens: 256,
         chunkOverlap: 32,
       });
-      expect(state.sharedChunks).toHaveLength(3);
+      expect(state.sharedChunks).toHaveLength(4);
     } finally {
       await db.close();
     }
@@ -569,7 +624,7 @@ describe('shared content-addressable store (postgres)', () => {
     try {
       await ensureSharedTables(db, 4);
 
-      await addSharedChunks(db, 'test-model', [
+      await addSharedChunks(db, 'test-model', 4, [
         {
           id: 'c1',
           filePath: '/p/a.ts',
@@ -605,13 +660,16 @@ describe('shared content-addressable store (postgres)', () => {
         },
       ], defaultChunkConfig);
 
-      const result = await getSharedChunksByHash(db, ['hash-a'], 'test-model', defaultChunkConfig);
+      const result = await getSharedChunksByHash(db, ['hash-a'], 'test-model', 4, defaultChunkConfig);
       expect(result).toHaveLength(2);
       expect(result[0]?.content).toBe('alpha');
       expect(result[1]?.content).toBe('alpha-part2');
 
-      const both = await getSharedChunksByHash(db, ['hash-a', 'hash-b'], 'test-model', defaultChunkConfig);
+      const both = await getSharedChunksByHash(db, ['hash-a', 'hash-b'], 'test-model', 4, defaultChunkConfig);
       expect(both).toHaveLength(3);
+
+      const wrongDimensions = await getSharedChunksByHash(db, ['hash-a'], 'test-model', 3, defaultChunkConfig);
+      expect(wrongDimensions).toHaveLength(0);
     } finally {
       await db.close();
     }
@@ -626,7 +684,7 @@ describe('shared content-addressable store (postgres)', () => {
     try {
       await ensureSharedTables(db, 4);
 
-      await addSharedChunks(db, 'test-model', [
+      await addSharedChunks(db, 'test-model', 4, [
         {
           id: 'c1',
           filePath: '/p/a.ts',
@@ -640,15 +698,18 @@ describe('shared content-addressable store (postgres)', () => {
         },
       ], defaultChunkConfig);
 
-      const existing = await contentHashesExist(db, ['hash-a', 'hash-b', 'hash-c'], 'test-model', defaultChunkConfig);
+      const existing = await contentHashesExist(db, ['hash-a', 'hash-b', 'hash-c'], 'test-model', 4, defaultChunkConfig);
       expect(existing).toEqual(new Set(['hash-a']));
 
       // Different model should return empty
-      const otherModel = await contentHashesExist(db, ['hash-a'], 'other-model', defaultChunkConfig);
+      const otherModel = await contentHashesExist(db, ['hash-a'], 'other-model', 4, defaultChunkConfig);
       expect(otherModel).toEqual(new Set());
 
+      const otherDimensions = await contentHashesExist(db, ['hash-a'], 'test-model', 3, defaultChunkConfig);
+      expect(otherDimensions).toEqual(new Set());
+
       // Different chunk config should return empty
-      const otherChunkConfig = await contentHashesExist(db, ['hash-a'], 'test-model', {
+      const otherChunkConfig = await contentHashesExist(db, ['hash-a'], 'test-model', 4, {
         chunkMaxTokens: 256,
         chunkOverlap: 32,
       });
@@ -667,7 +728,7 @@ describe('shared content-addressable store (postgres)', () => {
     try {
       await ensureSharedTables(db, 4);
 
-      await addSharedChunks(db, 'test-model', [
+      await addSharedChunks(db, 'test-model', 4, [
         {
           id: 'c1',
           filePath: '/p/a.ts',
@@ -687,6 +748,20 @@ describe('shared content-addressable store (postgres)', () => {
           chunkIndex: 0,
           content: 'beta',
           vector: new Float32Array([0.1, 0.9, 0.0, 0.0]),
+          fileType: '.ts',
+          createdAt: '2025-01-01T00:00:00.000Z',
+        },
+      ], defaultChunkConfig);
+
+      await addSharedChunks(db, 'test-model', 3, [
+        {
+          id: 'c3',
+          filePath: '/p/c.ts',
+          relativePath: 'c.ts',
+          contentHash: 'hash-c',
+          chunkIndex: 0,
+          content: 'gamma',
+          vector: new Float32Array([1.0, 0.0, 0.0]),
           fileType: '.ts',
           createdAt: '2025-01-01T00:00:00.000Z',
         },
@@ -857,18 +932,18 @@ describe('shared content-addressable store (postgres)', () => {
       };
 
       // First worktree indexes the file
-      await addSharedChunks(db, 'test-model', [sharedChunk], defaultChunkConfig);
+      await addSharedChunks(db, 'test-model', 4, [sharedChunk], defaultChunkConfig);
       expect(state.sharedChunks).toHaveLength(1);
 
       // Second worktree indexes the same file content (different path)
-      await addSharedChunks(db, 'test-model', [
+      await addSharedChunks(db, 'test-model', 4, [
         { ...sharedChunk, id: 'c2', filePath: '/worktree-2/src/a.ts' },
       ], defaultChunkConfig);
       // Should still be 1 because ON CONFLICT DO NOTHING
       expect(state.sharedChunks).toHaveLength(1);
 
       // Verify both can look up the shared chunk
-      const existing = await contentHashesExist(db, ['hash-shared'], 'test-model', defaultChunkConfig);
+      const existing = await contentHashesExist(db, ['hash-shared'], 'test-model', 4, defaultChunkConfig);
       expect(existing.has('hash-shared')).toBe(true);
     } finally {
       await db.close();
@@ -888,9 +963,9 @@ describe('shared content-addressable store (postgres)', () => {
 
     // All shared functions should gracefully return empty for non-postgres
     await ensureSharedTables(db, 4); // no-op
-    expect(await addSharedChunks(db, 'model', [], defaultChunkConfig)).toBe(0);
+    expect(await addSharedChunks(db, 'model', 4, [], defaultChunkConfig)).toBe(0);
     expect(await getSharedChunksByHash(db, ['hash'])).toEqual([]);
     expect(await searchSharedChunks(db, new Float32Array([1, 0, 0, 0]), { limit: 10 })).toEqual([]);
-    expect(await contentHashesExist(db, ['hash'], 'model', defaultChunkConfig)).toEqual(new Set());
+    expect(await contentHashesExist(db, ['hash'], 'model', 4, defaultChunkConfig)).toEqual(new Set());
   });
 });

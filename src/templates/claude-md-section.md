@@ -1,94 +1,37 @@
-## lgrep - Local Semantic Code Search
+## lgrep - Semantic Code Search
 
-**Use lgrep for code exploration, refactoring analysis, and context building.**
+Use lgrep for code exploration, context building, and refactor analysis.
 
-### When to Use
+### When to Use It
 
-- Searching for code by meaning (not just text matching)
-- Understanding how the codebase works
-- Building context for implementing features
-- Finding dead code, unused exports, or circular dependencies
-- Analyzing the impact of refactoring changes
-- Locating relevant files for a task
+- Search for implementation by meaning, not only by keywords
+- Find definitions, usages, callers, and impact
+- Build task-specific context before editing
+- Find dead code, unused exports, similar code, or cycles
 
-### Natural Language Queries
+### Storage-Aware Guidance
 
-Use `lgrep intent` for natural language queries:
-
-```bash
-lgrep intent "what calls awardBadge"        # → finds callers
-lgrep intent "what happens if I change X"   # → shows impact
-lgrep intent "find dead code"               # → detects unused functions
-lgrep intent "show circular dependencies"   # → finds cycles
-```
+- In **local mode**, `lgrep watch` can keep the current repo indexed.
+- In **cloud mode**, prefer the configured shared remote index and avoid starting local watchers unless the user asks for a local workflow.
 
 ### Quick Commands
 
 ```bash
-# Search semantically (auto-detects index from current directory)
-lgrep search "user authentication"
-
-# Find usages and definitions
-lgrep search --usages "functionName"
-lgrep search --definition "ClassName"
-
-# Build context for a task
-lgrep context "implement feature X"
-
-# Find who calls a function
-lgrep callers myFunction
-
-# Analyze change impact
-lgrep impact myFunction
-
-# Find dead code (functions with zero callers)
-lgrep dead
-
-# Find unused exports
-lgrep unused-exports
-
-# Detect circular dependencies
-lgrep cycles
-
-# Find similar/duplicate code
-lgrep similar
-
-# Preview rename impact
-lgrep rename oldName newName --preview
-
-# Check for breaking signature changes
-lgrep breaking
-
-# List available indexes
+lgrep doctor
 lgrep list
+lgrep search "user authentication"
+lgrep search --definition "ClassName"
+lgrep search --usages "functionName"
+lgrep callers myFunction
+lgrep impact myFunction
+lgrep context "implement feature X"
+lgrep intent "what calls awardBadge"
 ```
 
 ### Best Practices
 
-1. **Use natural language** - `lgrep intent` understands what you want
-2. **Auto-detection works** - Commands detect the right index from your directory
-3. **Check impact before refactoring** - Use `lgrep impact` before changing functions
-4. **Find dead code regularly** - Use `lgrep dead` to keep the codebase clean
-5. **Context builder first** - Use `lgrep context` for optimal file selection
-6. **JSON output** - Use `--json` for programmatic processing
-
-### Background Daemon
-
-lgrep runs a background watcher daemon for each indexed project:
-
-```bash
-# Check what's running
-lgrep list
-
-# Start watcher for current directory (auto-names from folder)
-lgrep watch .
-
-# Start with custom name
-lgrep watch /path/to/project --name myproject
-
-# Stop a watcher
-lgrep stop myproject
-```
-
-**Note**: The SessionStart hook auto-starts watchers when you open a project.
-If searches return no results, check `lgrep list` to verify the watcher is running.
+1. Run `lgrep doctor` before debugging setup problems.
+2. Use `lgrep intent` for natural-language repo questions.
+3. Use `lgrep context` before making cross-cutting code changes.
+4. In local mode, use watchers only when you want automatic reindexing.
+5. In cloud mode, assume the remote index is the source of truth.

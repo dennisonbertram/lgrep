@@ -10,31 +10,53 @@ Requires Node.js >= 18.17.
 
 ```bash
 npm install -g lgrep
-export OPENAI_API_KEY=sk-...   # or: VOYAGE_API_KEY, COHERE_API_KEY
-lgrep doctor                   # verify setup
+lgrep init
 ```
 
-No API key? Run `lgrep setup` to install Ollama locally (free, ~2GB download).
+`lgrep init` walks you through the two supported first-run paths:
+
+- `Local` - local index and local cache
+- `Cloud` - Postgres-backed index and Postgres-backed cache
+
+### From Source
+
+```bash
+git clone https://github.com/dennisonbertram/lgrep && cd lgrep
+npm install --legacy-peer-deps
+npm run build
+node dist/cli/index.js init
+```
 
 ## Quick Start
 
 ```bash
-lgrep index .                              # index your project
-lgrep search "user authentication logic"   # semantic search
-lgrep search --usages "validateUser"       # find all usages of a symbol
-lgrep search --definition "UserService"    # jump to definition
-lgrep context "add rate limiting"          # build LLM context for a task
-lgrep intent "what calls awardBadge"       # natural language query routing
+lgrep init
+lgrep doctor
+lgrep list
+lgrep search "user authentication logic"
+lgrep search --usages "validateUser"
+lgrep search --definition "UserService"
+lgrep context "add rate limiting"
+lgrep intent "what calls awardBadge"
 ```
 
-## Claude Code Integration
+## Agent Integration
 
 ```bash
-lgrep install       # add skill + SessionStart hook
-lgrep install-mcp   # or install as MCP server
+lgrep install --target claude
+lgrep install --target codex
+lgrep install --target mcp
+lgrep install --target all
 ```
 
-Claude will automatically use lgrep for semantic search, code intelligence, and context building.
+Targets:
+
+- `claude` installs the Claude skill and SessionStart hook
+- `codex` writes project guidance into `AGENTS.md`
+- `mcp` configures lgrep as an MCP server
+- `all` installs all three
+
+In local mode, the SessionStart hook can start local watchers automatically. In cloud mode, the hook exits immediately and relies on the shared remote index.
 
 ## Commands
 
@@ -51,6 +73,8 @@ Claude will automatically use lgrep for semantic search, code intelligence, and 
 | `lgrep stop <name>` | Stop a watcher |
 | `lgrep delete <name>` | Delete an index |
 | `lgrep clean` | Remove failed/stale/zombie indexes |
+| `lgrep init` | Guided setup for local or cloud profiles |
+| `lgrep profile` | Manage named local/cloud profiles |
 
 ### Code Intelligence
 
@@ -87,11 +111,11 @@ All commands support `--json` for scripting. Most support `-i, --index` and `-l,
 | **OpenAI** | ~50ms | General (recommended) | `OPENAI_API_KEY` |
 | **Voyage** | ~100ms | Code search | `VOYAGE_API_KEY` |
 | **Cohere** | ~50ms | Multilingual | `COHERE_API_KEY` |
-| **Ollama** | ~1-5s | Privacy, offline | `lgrep setup` |
+| **Ollama** | ~1-5s | Privacy, offline | `lgrep init` |
 
 ```bash
-lgrep config set model "auto"                       # auto-detect (default)
-lgrep config set model "voyage:voyage-code-3"       # explicit
+lgrep config model auto                 # auto-detect (default)
+lgrep config model voyage:voyage-code-3 # explicit
 ```
 
 ### LLM Providers (Summarization)
@@ -99,8 +123,8 @@ lgrep config set model "voyage:voyage-code-3"       # explicit
 Auto-detected. Priority: Groq > Anthropic > OpenAI > Ollama.
 
 ```bash
-lgrep config set summarizationModel "auto"                    # default
-lgrep config set summarizationModel "groq:llama-3.1-8b-instant"  # explicit
+lgrep config summarizationModel auto                   # default
+lgrep config summarizationModel groq:llama-3.1-8b-instant # explicit
 ```
 
 ## Project Config
@@ -116,7 +140,7 @@ Create `.lgrep.json` in your repo root to skip `--index` flags:
 
 ## Remote Storage
 
-Local by default. For shared/cloud indexes, use Postgres with pgvector or S3/R2.
+For cloud mode, lgrep defaults to Postgres for both the index and the cache. S3/R2 is still supported as an advanced/manual path, but it is no longer the default onboarding route.
 
 See [docs/guides/remote-storage.md](docs/guides/remote-storage.md) for setup.
 
@@ -134,13 +158,23 @@ const explanation = await ai.generateText('Explain this code...');
 
 ## Configuration
 
-Config location: `~/Library/Application Support/lgrep/config.json` (macOS), `~/.local/share/lgrep/config.json` (Linux). Override with `LGREP_HOME`.
+By default, lgrep reads config from the active profile. You can manage profiles with `lgrep profile`.
 
 ```bash
-lgrep config list              # show all settings
-lgrep config get model         # get one
-lgrep config set model "auto"  # set one
+lgrep profile list
+lgrep profile create cloud
+lgrep profile use cloud
+lgrep config                   # show all settings
+lgrep config model             # get one
+lgrep config model auto        # set one
 lgrep doctor                   # check everything
+```
+
+You can still override everything with `LGREP_HOME` for a one-off isolated home:
+
+```bash
+LGREP_HOME="$HOME/Library/Application Support/lgrep-local" lgrep doctor
+LGREP_HOME="$HOME/Library/Application Support/lgrep-local" lgrep index . --name my-project
 ```
 
 ## License
@@ -151,5 +185,7 @@ MIT
 
 ```bash
 git clone https://github.com/dennisonbertram/lgrep && cd lgrep
-npm install && npm test
+npm install --legacy-peer-deps
+npm run build
+npm test
 ```

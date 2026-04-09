@@ -179,7 +179,7 @@ export async function runWorktreeCreateCommand(
 
           // Phase 2.5: Check shared store
           const allHashes = chunkingResults.map((r) => r.contentHash);
-          const existingHashes = await contentHashesExist(db, allHashes, embedClient.model, {
+          const existingHashes = await contentHashesExist(db, allHashes, embedClient.model, dimensions, {
             chunkMaxTokens: effectiveChunkSize,
             chunkOverlap: effectiveChunkOverlap,
           });
@@ -194,6 +194,7 @@ export async function runWorktreeCreateCommand(
                 db,
                 [result.contentHash],
                 embedClient.model,
+                dimensions,
                 {
                   chunkMaxTokens: effectiveChunkSize,
                   chunkOverlap: effectiveChunkOverlap,
@@ -293,7 +294,7 @@ export async function runWorktreeCreateCommand(
             }
 
             // Write to shared store
-            await addSharedChunks(db, embedClient.model, docChunks, {
+            await addSharedChunks(db, embedClient.model, dimensions, docChunks, {
               chunkMaxTokens: effectiveChunkSize,
               chunkOverlap: effectiveChunkOverlap,
             });
@@ -512,7 +513,7 @@ export async function runWorktreeForkCommand(
           });
 
           // Check shared store
-          const existsInShared = await contentHashesExist(db, [data.hash], embedClient.model, {
+          const existsInShared = await contentHashesExist(db, [data.hash], embedClient.model, parent.modelDims, {
             chunkMaxTokens: parent.chunkMaxTokens,
             chunkOverlap: parent.chunkOverlap,
           });
@@ -523,6 +524,7 @@ export async function runWorktreeForkCommand(
               db,
               [data.hash],
               embedClient.model,
+              parent.modelDims,
               {
                 chunkMaxTokens: parent.chunkMaxTokens,
                 chunkOverlap: parent.chunkOverlap,
@@ -612,7 +614,7 @@ export async function runWorktreeForkCommand(
 
           // Write to shared store
           if (docChunks.length > 0) {
-            await addSharedChunks(db, embedClient.model, docChunks, {
+            await addSharedChunks(db, embedClient.model, parent.modelDims, docChunks, {
               chunkMaxTokens: parent.chunkMaxTokens,
               chunkOverlap: parent.chunkOverlap,
             });
@@ -871,7 +873,7 @@ export async function runWorktreeUpdateCommand(
             overlapTokens: wt.chunkOverlap,
           });
 
-          const existsInShared = await contentHashesExist(db, [data.hash], embedClient.model, {
+          const existsInShared = await contentHashesExist(db, [data.hash], embedClient.model, wt.modelDims, {
             chunkMaxTokens: wt.chunkMaxTokens,
             chunkOverlap: wt.chunkOverlap,
           });
@@ -882,6 +884,7 @@ export async function runWorktreeUpdateCommand(
               db,
               [data.hash],
               embedClient.model,
+              wt.modelDims,
               {
                 chunkMaxTokens: wt.chunkMaxTokens,
                 chunkOverlap: wt.chunkOverlap,
@@ -965,7 +968,7 @@ export async function runWorktreeUpdateCommand(
           }
 
           if (docChunks.length > 0) {
-            await addSharedChunks(db, embedClient.model, docChunks, {
+            await addSharedChunks(db, embedClient.model, wt.modelDims, docChunks, {
               chunkMaxTokens: wt.chunkMaxTokens,
               chunkOverlap: wt.chunkOverlap,
             });

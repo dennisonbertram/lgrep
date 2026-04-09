@@ -25,7 +25,7 @@ export VOYAGE_API_KEY="your-key"    # Priority 3
 # Ollama is fallback (no key needed)
 
 # lgrep will auto-detect and use the best available provider
-lgrep config set model "auto"
+lgrep config model auto
 ```
 
 Detection priority: **OpenAI > Cohere > Voyage > Ollama**
@@ -34,16 +34,16 @@ Detection priority: **OpenAI > Cohere > Voyage > Ollama**
 
 ```bash
 # OpenAI (recommended for speed/cost balance)
-lgrep config set model "openai:text-embedding-3-small"
+lgrep config model openai:text-embedding-3-small
 
 # Cohere (good for multilingual)
-lgrep config set model "cohere:embed-english-v3.0"
+lgrep config model cohere:embed-english-v3.0
 
 # Voyage (excellent for code)
-lgrep config set model "voyage:voyage-code-3"
+lgrep config model voyage:voyage-code-3
 
 # Ollama (local, private)
-lgrep config set model "ollama:mxbai-embed-large"
+lgrep config model ollama:mxbai-embed-large
 ```
 
 ## Provider Details
@@ -60,7 +60,7 @@ Best for: General use, speed, and cost efficiency.
 **Setup:**
 ```bash
 export OPENAI_API_KEY="sk-..."
-lgrep config set model "openai:text-embedding-3-small"
+lgrep config model openai:text-embedding-3-small
 ```
 
 **Get API Key:** https://platform.openai.com/api-keys
@@ -78,7 +78,7 @@ Best for: Multilingual codebases, international projects.
 **Setup:**
 ```bash
 export COHERE_API_KEY="..."
-lgrep config set model "cohere:embed-english-v3.0"
+lgrep config model cohere:embed-english-v3.0
 ```
 
 **Get API Key:** https://dashboard.cohere.com/api-keys
@@ -97,7 +97,7 @@ Best for: Code search, programming-focused projects.
 **Setup:**
 ```bash
 export VOYAGE_API_KEY="..."
-lgrep config set model "voyage:voyage-code-3"
+lgrep config model voyage:voyage-code-3
 ```
 
 **Get API Key:** https://dash.voyageai.com/
@@ -123,7 +123,7 @@ ollama serve
 ollama pull mxbai-embed-large
 
 # Configure lgrep
-lgrep config set model "ollama:mxbai-embed-large"
+lgrep config model ollama:mxbai-embed-large
 ```
 
 ## Migrating Indexes
@@ -137,7 +137,7 @@ To use a new provider with existing projects:
 lgrep delete my-project
 
 # 2. Set new provider
-lgrep config set model "openai:text-embedding-3-small"
+lgrep config model openai:text-embedding-3-small
 
 # 3. Re-index
 lgrep index /path/to/project --name my-project
@@ -220,7 +220,7 @@ ollama pull mxbai-embed-large
 Switch to an external provider:
 ```bash
 export OPENAI_API_KEY="your-key"
-lgrep config set model "auto"
+lgrep config model auto
 ```
 
 ### Dimension Mismatch Error
