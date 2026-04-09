@@ -52,6 +52,8 @@ import {
   ensureProjectTables,
   getProject,
 } from '../../storage/project.js';
+import { withWorktreeLock } from '../../storage/locks.js';
+import { requirePostgresPool } from '../../storage/postgres.js';
 import { createSpinner } from '../utils/progress.js';
 
 // ---------------------------------------------------------------------------
@@ -747,6 +749,18 @@ export async function runWorktreeUpdateCommand(
       const wt = await getWorktree(db, nameOrId);
       if (!wt) throw new Error(`Worktree "${nameOrId}" not found`);
       if (!wt.rootPath) throw new Error(`Worktree "${nameOrId}" has no root path`);
+
+      // Acquire advisory lock for concurrent safety (Postgres only)
+      const pool = db.mode === 'postgres' && db.pool ? db.pool : null;
+      if (pool) {
+        const lockAcquired = await pool.query<{ acquired: boolean }>(
+          'SELECT pg_try_advisory_lock($1::bigint) AS acquired',
+          [BigInt('0x' + wt.id.replace(/-/g, '').slice(0, 16)).toString()],
+        );
+        if (!lockAcquired.rows[0]?.acquired) {
+          throw new Error(`Worktree "${wt.name}" is currently being updated by another process`);
+        }
+      }
 
       spinner?.update('Initializing embedding model...');
       const embedClient = createEmbeddingClient({ model: wt.model });

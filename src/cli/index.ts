@@ -51,6 +51,8 @@ import {
   runProjectConfigSetCommand,
   runProjectDeleteCommand,
 } from './commands/project.js';
+import { runServerStartCommand, runServerStatusCommand } from './commands/server.js';
+import { runGcCommand } from './commands/gc.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { detectIndexForDirectory } from './utils/auto-detect.js';
 import { deleteIndex } from '../storage/lance.js';
@@ -2218,6 +2220,120 @@ projectCmd
       } else {
         console.error(`Project "${name}" not found.`);
         process.exit(1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Server commands - shared HTTP query server
+const serverCmd = program
+  .command('server')
+  .description('Manage the lgrep query server (replaces per-index daemons for cloud deployment)');
+
+serverCmd
+  .command('start')
+  .description('Start the lgrep query server')
+  .option('--port <port>', 'Port to listen on', '8420')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { port?: string; json?: boolean }) => {
+    try {
+      const result = await runServerStartCommand({
+        port: options.port ? parseInt(options.port, 10) : undefined,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.success) process.exit(1);
+        return;
+      }
+
+      if (!result.success) {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+serverCmd
+  .command('status')
+  .description('Show query server status and health')
+  .option('--port <port>', 'Port to check', '8420')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { port?: string; json?: boolean }) => {
+    try {
+      const result = await runServerStatusCommand({
+        port: options.port ? parseInt(options.port, 10) : undefined,
+        json: options.json,
+      }) as Record<string, unknown>;
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(0);
+      }
+
+      if (result['status'] === 'not_running') {
+        console.log(`Server not running at ${result['url']}`);
+        return;
+      }
+
+      console.log(`\nServer Status: ${result['status']}`);
+      console.log(`  Uptime: ${result['uptime']}`);
+      const pg = result['postgres'] as Record<string, unknown> | undefined;
+      if (pg) {
+        console.log(`  Postgres: ${pg['connected'] ? 'connected' : 'disconnected'}`);
+        console.log(`    Pool: ${pg['active_connections']} active / ${pg['idle_connections']} idle`);
+      }
+      const stats = result['stats'] as Record<string, unknown> | undefined;
+      if (stats) {
+        console.log(`  Projects: ${stats['projects']}`);
+        console.log(`  Worktrees: ${stats['worktrees']}`);
+        console.log(`  Shared chunks: ${stats['shared_chunks']}`);
+      }
+      console.log('');
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// GC command - garbage collect orphaned shared data
+program
+  .command('gc')
+  .description('Garbage-collect orphaned shared chunks, code intelligence, and stale worktrees')
+  .option('--dry-run', 'Report what would be deleted without actually deleting')
+  .option('--stale-days <days>', 'Also clean up worktrees not updated in N days')
+  .option('--project <name>', 'Scope GC to a specific project')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { dryRun?: boolean; staleDays?: string; project?: string; json?: boolean }) => {
+    try {
+      const result = await runGcCommand({
+        dryRun: options.dryRun,
+        staleDays: options.staleDays ? parseInt(options.staleDays, 10) : undefined,
+        project: options.project,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(result.success ? 0 : 1);
       }
     } catch (err) {
       if (options.json) {
