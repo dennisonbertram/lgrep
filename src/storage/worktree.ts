@@ -22,6 +22,7 @@ export interface Worktree {
   branch: string | null;
   baseCommit: string | null;
   parentId: string | null;
+  projectId: string | null;
   model: string;
   modelDims: number;
   status: 'building' | 'ready' | 'failed';
@@ -50,6 +51,7 @@ export interface CreateWorktreeOptions {
   branch?: string;
   baseCommit?: string;
   parentId?: string;
+  projectId?: string;
   model: string;
   modelDims: number;
 }
@@ -126,6 +128,7 @@ function rowToWorktree(row: Record<string, unknown>): Worktree {
     branch: (row['branch'] as string) ?? null,
     baseCommit: (row['base_commit'] as string) ?? null,
     parentId: (row['parent_id'] as string) ?? null,
+    projectId: (row['project_id'] as string) ?? null,
     model: row['model'] as string,
     modelDims: row['model_dims'] as number,
     status: row['status'] as Worktree['status'],
@@ -161,9 +164,9 @@ export async function createWorktree(
 
   await pool.query(
     `INSERT INTO ${table}
-       (id, name, root_path, repo_url, branch, base_commit, parent_id,
+       (id, name, root_path, repo_url, branch, base_commit, parent_id, project_id,
         model, model_dims, status, file_count, chunk_count, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'building', 0, 0, $10, $10)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'building', 0, 0, $11, $11)`,
     [
       id,
       opts.name,
@@ -172,6 +175,7 @@ export async function createWorktree(
       opts.branch ?? null,
       opts.baseCommit ?? null,
       opts.parentId ?? null,
+      opts.projectId ?? null,
       opts.model,
       opts.modelDims,
       now,
@@ -186,6 +190,7 @@ export async function createWorktree(
     branch: opts.branch ?? null,
     baseCommit: opts.baseCommit ?? null,
     parentId: opts.parentId ?? null,
+    projectId: opts.projectId ?? null,
     model: opts.model,
     modelDims: opts.modelDims,
     status: 'building',
@@ -243,16 +248,26 @@ export async function forkWorktree(
 }
 
 /**
- * Get a worktree by ID or name.
+ * Get a worktree by ID or name, optionally scoped to a project.
  */
 export async function getWorktree(
   db: IndexDatabase,
   idOrName: string,
+  opts?: { projectId?: string },
 ): Promise<Worktree | null> {
   if (!isPostgres(db)) return null;
 
   const pool = requirePostgresPool(db);
   const table = quoteIdentifier(WORKTREES_TABLE);
+
+  if (opts?.projectId) {
+    const result = await pool.query<Record<string, unknown>>(
+      `SELECT * FROM ${table} WHERE (id = $1 OR name = $1) AND project_id = $2 LIMIT 1`,
+      [idOrName, opts.projectId],
+    );
+    if (result.rows.length === 0) return null;
+    return rowToWorktree(result.rows[0]!);
+  }
 
   const result = await pool.query<Record<string, unknown>>(
     `SELECT * FROM ${table} WHERE id = $1 OR name = $1 LIMIT 1`,
@@ -264,13 +279,24 @@ export async function getWorktree(
 }
 
 /**
- * List all worktrees.
+ * List worktrees, optionally filtered by project.
  */
-export async function listWorktrees(db: IndexDatabase): Promise<Worktree[]> {
+export async function listWorktrees(
+  db: IndexDatabase,
+  opts?: { projectId?: string },
+): Promise<Worktree[]> {
   if (!isPostgres(db)) return [];
 
   const pool = requirePostgresPool(db);
   const table = quoteIdentifier(WORKTREES_TABLE);
+
+  if (opts?.projectId) {
+    const result = await pool.query<Record<string, unknown>>(
+      `SELECT * FROM ${table} WHERE project_id = $1 ORDER BY created_at DESC`,
+      [opts.projectId],
+    );
+    return result.rows.map(rowToWorktree);
+  }
 
   const result = await pool.query<Record<string, unknown>>(
     `SELECT * FROM ${table} ORDER BY created_at DESC`,

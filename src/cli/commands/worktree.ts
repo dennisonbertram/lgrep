@@ -48,6 +48,10 @@ import {
   addSharedCalls,
 } from '../../storage/code-intel.js';
 import type { CodeSymbol, CodeDependency, CallEdge } from '../../types/code-intel.js';
+import {
+  ensureProjectTables,
+  getProject,
+} from '../../storage/project.js';
 import { createSpinner } from '../utils/progress.js';
 
 // ---------------------------------------------------------------------------
@@ -58,6 +62,7 @@ export interface WorktreeCreateOptions {
   name: string;
   path: string;
   branch?: string;
+  project?: string;
   json?: boolean;
 }
 
@@ -90,12 +95,33 @@ export async function runWorktreeCreateCommand(
     });
 
     try {
+      // Resolve project if specified
+      let projectId: string | undefined;
+      let effectiveModel = config.model;
+      let effectiveChunkSize = config.chunkSize;
+      let effectiveChunkOverlap = config.chunkOverlap;
+      let effectiveExcludes = config.excludes;
+
+      await ensureWorktreeTables(db);
+
+      if (opts.project) {
+        await ensureProjectTables(db);
+        const proj = await getProject(db, opts.project);
+        if (!proj) throw new Error(`Project "${opts.project}" not found`);
+        projectId = proj.id;
+        effectiveModel = proj.model;
+        effectiveChunkSize = proj.chunkMaxTokens;
+        effectiveChunkOverlap = proj.chunkOverlap;
+        if (proj.excludePatterns.length > 0) {
+          effectiveExcludes = [...config.excludes, ...proj.excludePatterns];
+        }
+      }
+
       spinner?.update('Initializing embedding model...');
-      const embedClient = createEmbeddingClient({ model: config.model });
+      const embedClient = createEmbeddingClient({ model: effectiveModel });
       const dimensions = await embedClient.getModelDimensions();
 
       // Ensure tables exist
-      await ensureWorktreeTables(db);
       await ensureSharedTables(db, dimensions);
       await ensureSharedCodeIntelTables(db);
 
@@ -105,6 +131,7 @@ export async function runWorktreeCreateCommand(
         name: opts.name,
         rootPath: absolutePath,
         branch: opts.branch,
+        projectId,
         model: embedClient.model,
         modelDims: dimensions,
       });
@@ -113,7 +140,7 @@ export async function runWorktreeCreateCommand(
         // Walk files
         spinner?.update('Discovering files...');
         const files = await walkFiles(absolutePath, {
-          excludes: config.excludes,
+          excludes: effectiveExcludes,
           secretExcludes: config.secretExcludes,
           maxFileSize: config.maxFileSize,
         });
@@ -141,8 +168,8 @@ export async function runWorktreeCreateCommand(
           // Phase 2: Chunk
           const chunkingResults = fileDataResults.map(({ file, content, contentHash }) => {
             const textChunks = chunkText(content, {
-              maxTokens: config.chunkSize,
-              overlapTokens: config.chunkOverlap,
+              maxTokens: effectiveChunkSize,
+              overlapTokens: effectiveChunkOverlap,
             });
             return { file, content, contentHash, fileType: file.extension, textChunks };
           });
@@ -328,6 +355,7 @@ export interface WorktreeForkOptions {
   name: string;
   path: string;
   branch?: string;
+  project?: string;
   json?: boolean;
 }
 
@@ -364,8 +392,17 @@ export async function runWorktreeForkCommand(
     try {
       await ensureWorktreeTables(db);
 
+      // Resolve project scope for parent lookup
+      let projectId: string | undefined;
+      if (opts.project) {
+        await ensureProjectTables(db);
+        const proj = await getProject(db, opts.project);
+        if (!proj) throw new Error(`Project "${opts.project}" not found`);
+        projectId = proj.id;
+      }
+
       // Find parent
-      const parent = await getWorktree(db, opts.parent);
+      const parent = await getWorktree(db, opts.parent, projectId ? { projectId } : undefined);
       if (!parent) throw new Error(`Parent worktree "${opts.parent}" not found`);
 
       spinner?.update('Initializing embedding model...');
@@ -380,6 +417,7 @@ export async function runWorktreeForkCommand(
         name: opts.name,
         rootPath: absolutePath,
         branch: opts.branch,
+        projectId: parent.projectId ?? undefined,
       });
 
       try {
@@ -610,12 +648,21 @@ export async function runWorktreeForkCommand(
 // ---------------------------------------------------------------------------
 
 export async function runWorktreeListCommand(
-  opts: { json?: boolean } = {},
+  opts: { project?: string; json?: boolean } = {},
 ): Promise<Worktree[]> {
   const db = await openConfiguredDatabase();
   try {
     await ensureWorktreeTables(db);
-    return await listWorktrees(db);
+
+    let projectId: string | undefined;
+    if (opts.project) {
+      await ensureProjectTables(db);
+      const proj = await getProject(db, opts.project);
+      if (!proj) throw new Error(`Project "${opts.project}" not found`);
+      projectId = proj.id;
+    }
+
+    return await listWorktrees(db, projectId ? { projectId } : undefined);
   } finally {
     await db.close();
   }

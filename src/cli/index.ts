@@ -44,6 +44,13 @@ import {
   runWorktreeUpdateCommand,
   runWorktreeGcCommand,
 } from './commands/worktree.js';
+import {
+  runProjectCreateCommand,
+  runProjectListCommand,
+  runProjectInfoCommand,
+  runProjectConfigSetCommand,
+  runProjectDeleteCommand,
+} from './commands/project.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { detectIndexForDirectory } from './utils/auto-detect.js';
 import { deleteIndex } from '../storage/lance.js';
@@ -238,6 +245,7 @@ program
   .option('--definition <symbol>', 'Find symbol definition')
   .option('--type <kind>', 'Filter by symbol type (function, class, interface, etc.)')
   .option('-w, --worktree <name>', 'Search within a worktree (uses shared chunk store)')
+  .option('-p, --project <name>', 'Search within a project (all worktrees or combined with --worktree)')
   .option('-j, --json', 'Output as JSON')
   .action(async (query: string, options: {
     index?: string;
@@ -247,6 +255,7 @@ program
     definition?: string;
     type?: string;
     worktree?: string;
+    project?: string;
     json?: boolean;
   }) => {
     try {
@@ -263,6 +272,7 @@ program
         definition: options.definition,
         type: options.type,
         worktree: options.worktree,
+        project: options.project,
         json: options.json,
       });
 
@@ -1820,13 +1830,15 @@ worktreeCmd
   .description('Create a new worktree from a directory (full index into shared store + manifest)')
   .requiredOption('-n, --name <name>', 'Worktree name')
   .option('-b, --branch <branch>', 'Git branch name')
+  .option('--project <name>', 'Project to create the worktree under')
   .option('-j, --json', 'Output as JSON')
-  .action(async (path: string, options: { name: string; branch?: string; json?: boolean }) => {
+  .action(async (path: string, options: { name: string; branch?: string; project?: string; json?: boolean }) => {
     try {
       const result = await runWorktreeCreateCommand({
         name: options.name,
         path,
         branch: options.branch,
+        project: options.project,
         json: options.json,
       });
 
@@ -1850,14 +1862,16 @@ worktreeCmd
   .requiredOption('-n, --name <name>', 'New worktree name')
   .requiredOption('-p, --path <path>', 'Path to the new branch directory')
   .option('-b, --branch <branch>', 'Git branch name')
+  .option('--project <name>', 'Project scope for parent lookup')
   .option('-j, --json', 'Output as JSON')
-  .action(async (parent: string, options: { name: string; path: string; branch?: string; json?: boolean }) => {
+  .action(async (parent: string, options: { name: string; path: string; branch?: string; project?: string; json?: boolean }) => {
     try {
       const result = await runWorktreeForkCommand({
         parent,
         name: options.name,
         path: options.path,
         branch: options.branch,
+        project: options.project,
         json: options.json,
       });
 
@@ -1878,10 +1892,11 @@ worktreeCmd
 worktreeCmd
   .command('list')
   .description('List all worktrees with stats')
+  .option('--project <name>', 'Filter worktrees by project')
   .option('-j, --json', 'Output as JSON')
-  .action(async (options: { json?: boolean }) => {
+  .action(async (options: { project?: string; json?: boolean }) => {
     try {
-      const worktrees = await runWorktreeListCommand({ json: options.json });
+      const worktrees = await runWorktreeListCommand({ project: options.project, json: options.json });
 
       if (options.json) {
         console.log(JSON.stringify(worktrees, null, 2));
@@ -2023,6 +2038,190 @@ worktreeCmd
     } catch (err) {
       if (options.json) {
         console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Project commands - multi-project namespacing and isolation
+const projectCmd = program
+  .command('project')
+  .description('Manage projects for namespace isolation and per-project configuration');
+
+projectCmd
+  .command('create <name>')
+  .description('Create a new project with its own embedding model configuration')
+  .option('-m, --model <model>', 'Embedding model (defaults to global config)')
+  .option('-r, --repo <url>', 'Git remote URL')
+  .option('--display-name <name>', 'Human-readable display name')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name: string, options: { model?: string; repo?: string; displayName?: string; json?: boolean }) => {
+    try {
+      const project = await runProjectCreateCommand({
+        name,
+        model: options.model,
+        repo: options.repo,
+        displayName: options.displayName,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(project, null, 2));
+        process.exit(0);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+projectCmd
+  .command('list')
+  .description('List all projects')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    try {
+      const projects = await runProjectListCommand({ json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify(projects, null, 2));
+        process.exit(0);
+      }
+
+      if (projects.length === 0) {
+        console.log('No projects found.');
+        return;
+      }
+
+      console.log(`\n  Projects (${projects.length}):\n`);
+      for (const p of projects) {
+        const display = p.displayName ? ` (${p.displayName})` : '';
+        const repo = p.repoUrl ? `  Repo: ${p.repoUrl}` : '';
+        console.log(`  ${p.name}${display}`);
+        console.log(`    Model: ${p.model}${repo}`);
+        console.log('');
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+projectCmd
+  .command('info <name>')
+  .description('Show project details, stats, and worktrees')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name: string, options: { json?: boolean }) => {
+    try {
+      const info = await runProjectInfoCommand(name, { json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify(info, null, 2));
+        process.exit(0);
+      }
+
+      const { project: p, stats: s, worktrees } = info;
+      console.log(`\nProject: ${p.name}`);
+      if (p.displayName) console.log(`  Display name: ${p.displayName}`);
+      console.log(`  Model: ${p.model}`);
+      if (p.repoUrl) console.log(`  Repo: ${p.repoUrl}`);
+      console.log(`  Chunk config: ${p.chunkMaxTokens} tokens, ${p.chunkOverlap} overlap`);
+      console.log(`  Worktrees: ${s.worktreeCount}`);
+      console.log(`  Total files: ${s.totalFiles.toLocaleString()} (across all worktrees)`);
+      console.log(`  Unique files: ${s.uniqueFiles.toLocaleString()}`);
+      console.log(`  Total chunks: ${s.totalChunks.toLocaleString()} (across all worktrees)`);
+      console.log(`  Unique chunks: ${s.uniqueChunks.toLocaleString()} (in shared store)`);
+      if (s.storageSavingsPercent > 0) {
+        console.log(`  Storage savings: ${s.storageSavingsPercent}%`);
+      }
+
+      if (worktrees.length > 0) {
+        console.log(`\n  Worktrees:`);
+        for (const wt of worktrees) {
+          const branch = wt.branch ? ` [${wt.branch}]` : '';
+          console.log(`    ${wt.name}${branch} — ${wt.status}, ${wt.fileCount} files, ${wt.chunkCount} chunks`);
+        }
+      }
+      console.log('');
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+const projectConfigCmd = projectCmd
+  .command('config <name>')
+  .description('Manage per-project configuration');
+
+projectConfigCmd
+  .command('set <key> <value>')
+  .description('Set a project config value (model, chunkMaxTokens, chunkOverlap, repo, displayName, excludePatterns)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (key: string, value: string, options: { json?: boolean }) => {
+    try {
+      // The parent command captures <name>, access it via parent args
+      const projectName = projectConfigCmd.args[0];
+      if (!projectName) throw new Error('Project name is required');
+
+      const updated = await runProjectConfigSetCommand(projectName, key, value, { json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify(updated, null, 2));
+        process.exit(0);
+      }
+
+      if (updated) {
+        console.log(`Updated "${key}" for project "${updated.name}".`);
+      } else {
+        console.error('Project not found.');
+        process.exit(1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+projectCmd
+  .command('delete <name>')
+  .description('Delete a project (cascade deletes all worktrees and manifests)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name: string, options: { json?: boolean }) => {
+    try {
+      const deleted = await runProjectDeleteCommand(name, { json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify({ success: deleted }));
+        process.exit(deleted ? 0 : 1);
+      }
+
+      if (deleted) {
+        console.log(`Deleted project "${name}" and all its worktrees.`);
+      } else {
+        console.error(`Project "${name}" not found.`);
+        process.exit(1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
       } else {
         console.error(`Error: ${(err as Error).message}`);
       }

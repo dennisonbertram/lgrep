@@ -4,6 +4,7 @@ import {
   getIndex,
   searchChunks,
   searchSharedChunksForWorktree,
+  searchSharedChunksForProject,
   rerankerWithMMR,
   ensureSharedTables,
   type SearchResult,
@@ -16,6 +17,10 @@ import {
   ensureWorktreeTables,
   getWorktree,
 } from '../../storage/worktree.js';
+import {
+  ensureProjectTables,
+  getProject,
+} from '../../storage/project.js';
 
 /**
  * Options for the search command.
@@ -30,6 +35,7 @@ export interface SearchOptions {
   definition?: string;  // Find definition of this symbol
   type?: string;        // Filter by symbol kind
   worktree?: string;    // Search within a worktree (shared chunk store)
+  project?: string;     // Search within a project (all worktrees or specific one)
 }
 
 /**
@@ -265,6 +271,61 @@ export async function runSearchCommand(
           symbolType: options.type,
           symbols,
           count: symbols.length,
+        };
+      }
+
+      // Project-scoped search (all worktrees in a project, or one specific worktree)
+      if (options.project) {
+        await ensureProjectTables(db);
+        await ensureWorktreeTables(db);
+
+        const proj = await getProject(db, options.project);
+        if (!proj) throw new Error(`Project "${options.project}" not found`);
+
+        let worktreeId: string | undefined;
+        if (options.worktree) {
+          const wt = await getWorktree(db, options.worktree, { projectId: proj.id });
+          if (!wt) throw new Error(`Worktree "${options.worktree}" not found in project "${proj.name}"`);
+          worktreeId = wt.id;
+        }
+
+        spinner?.update('Initializing embedding model...');
+        const embedClient = createEmbeddingClient({ model: proj.model });
+
+        spinner?.update('Generating query embedding...');
+        const queryResult = await embedClient.embed(query);
+        const queryEmbedding = queryResult.embeddings[0];
+        if (!queryEmbedding) throw new Error('Failed to generate embedding for query');
+        const queryVector = new Float32Array(queryEmbedding);
+
+        await ensureSharedTables(db, proj.modelDims);
+
+        const scope = worktreeId ? `worktree "${options.worktree}"` : `project "${proj.name}"`;
+        spinner?.update(`Searching ${scope}...`);
+        const searchResults = await searchSharedChunksForProject(
+          db, queryVector, proj.id, { limit, model: proj.model, worktreeId },
+        );
+
+        spinner?.update('Reranking results...');
+        const rerankedResults = rerankerWithMMR(searchResults, queryVector, diversity);
+
+        const results: SearchResultItem[] = rerankedResults.map((r) => ({
+          filePath: r.filePath,
+          relativePath: r.relativePath,
+          content: r.content,
+          score: r._score,
+          lineStart: r.lineStart,
+          lineEnd: r.lineEnd,
+          chunkIndex: r.chunkIndex,
+        }));
+
+        spinner?.succeed(`Found ${results.length} results for "${query}" in ${scope}`);
+
+        return {
+          success: true,
+          query,
+          indexName: proj.name,
+          results,
         };
       }
 

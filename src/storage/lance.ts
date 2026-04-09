@@ -1788,6 +1788,88 @@ export async function searchSharedChunksForWorktree(
 }
 
 /**
+ * Vector similarity search across the shared chunk store,
+ * scoped to all worktrees within a project (optionally filtered to one worktree).
+ *
+ * This enables cross-worktree search within a project boundary.
+ */
+export async function searchSharedChunksForProject(
+  db: IndexDatabase,
+  queryVector: Float32Array,
+  projectId: string,
+  options: SearchOptions & { model?: string; worktreeId?: string }
+): Promise<(SearchResult & { worktreeName?: string })[]> {
+  if (!isPostgresDatabase(db)) return [];
+
+  const pool = requirePostgresPool(db);
+  const sc = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const wm = quoteIdentifier('lgrep_worktree_manifests');
+  const wt = quoteIdentifier('lgrep_worktrees');
+  const params: unknown[] = [vectorToSql(queryVector), projectId];
+  const clauses: string[] = [];
+
+  if (options.model) {
+    params.push(options.model);
+    clauses.push(`sc.model = $${params.length}`);
+  }
+
+  if (options.worktreeId) {
+    params.push(options.worktreeId);
+    clauses.push(`w.id = $${params.length}`);
+  }
+
+  params.push(options.limit);
+
+  const extraWhere = clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : '';
+
+  const result = await pool.query<Record<string, unknown>>(
+    `SELECT DISTINCT ON (sc.content_hash, sc.chunk_index)
+       sc.content_hash,
+       sc.chunk_index,
+       sc.model,
+       sc.content,
+       sc.vector::text AS vector,
+       sc.language,
+       sc.line_start,
+       sc.line_end,
+       sc.file_type,
+       sc.created_at::text AS created_at,
+       wm.relative_path,
+       w.name AS worktree_name,
+       (sc.vector <=> $1::vector) AS _distance
+     FROM ${sc} sc
+     JOIN ${wm} wm ON sc.content_hash = wm.content_hash
+     JOIN ${wt} w ON wm.worktree_id = w.id
+     WHERE w.project_id = $2${extraWhere}
+     ORDER BY sc.content_hash, sc.chunk_index, _distance
+     LIMIT $${params.length}`,
+    params
+  );
+
+  // Re-sort by distance since DISTINCT ON requires its own ORDER BY
+  const rows = result.rows.sort(
+    (a, b) => Number(a['_distance'] ?? 0) - Number(b['_distance'] ?? 0)
+  );
+
+  return rows.map((row) => ({
+    id: '',
+    filePath: '',
+    relativePath: row['relative_path'] as string,
+    contentHash: row['content_hash'] as string,
+    chunkIndex: row['chunk_index'] as number,
+    content: row['content'] as string,
+    vector: parseVectorValue(row['vector']),
+    language: (row['language'] as string) || undefined,
+    lineStart: row['line_start'] != null ? (row['line_start'] as number) : undefined,
+    lineEnd: row['line_end'] != null ? (row['line_end'] as number) : undefined,
+    fileType: row['file_type'] as string,
+    createdAt: row['created_at'] as string,
+    _score: Number(row['_distance'] ?? 0),
+    worktreeName: (row['worktree_name'] as string) || undefined,
+  }));
+}
+
+/**
  * Check which content hashes already exist in the shared chunk store.
  * Returns the subset of input hashes that are already stored.
  */
