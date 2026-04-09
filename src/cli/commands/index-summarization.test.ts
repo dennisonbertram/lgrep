@@ -2,7 +2,24 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runIndexCommand, type IndexOptions } from './index.js';
 import { createSummarizerClient } from '../../core/summarizer.js';
 import { updateSymbolSummary, getSymbols } from '../../storage/code-intel.js';
-import { openDatabase } from '../../storage/lance.js';
+import {
+  openDatabase,
+  getIndex,
+  createIndex,
+  addChunks,
+  addSharedChunks,
+  updateIndexStatus,
+  getFileContentHashes,
+  getFileMetadataHashes,
+  createFileMetadataTable,
+  upsertFileMetadata,
+  deleteFileMetadata,
+  deleteChunksByFilePath,
+  deleteAllChunks,
+  ensureSharedTables,
+  contentHashesExist,
+  getSharedChunksByHash,
+} from '../../storage/lance.js';
 import { getDbPath, getCachePath } from '../utils/paths.js';
 import { loadConfig } from '../../storage/config.js';
 import { access, readFile } from 'node:fs/promises';
@@ -110,6 +127,35 @@ describe('Index Command - Summarization', () => {
       close: vi.fn(),
     };
     vi.mocked(openDatabase).mockResolvedValue(mockDb as any);
+    vi.mocked(getIndex).mockResolvedValue(null);
+    vi.mocked(createIndex).mockResolvedValue({
+      name: 'test-index',
+      rootPath: '/test/path',
+      metadata: {
+        name: 'test-index',
+        rootPath: '/test/path',
+        status: 'building',
+        model: 'mxbai-embed-large',
+        modelDimensions: 1024,
+        documentCount: 0,
+        chunkCount: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    } as any);
+    vi.mocked(addChunks).mockResolvedValue();
+    vi.mocked(addSharedChunks).mockResolvedValue();
+    vi.mocked(updateIndexStatus).mockResolvedValue();
+    vi.mocked(getFileContentHashes).mockResolvedValue(new Map());
+    vi.mocked(getFileMetadataHashes).mockResolvedValue(new Map());
+    vi.mocked(createFileMetadataTable).mockResolvedValue();
+    vi.mocked(upsertFileMetadata).mockResolvedValue();
+    vi.mocked(deleteFileMetadata).mockResolvedValue();
+    vi.mocked(deleteChunksByFilePath).mockResolvedValue(0);
+    vi.mocked(deleteAllChunks).mockResolvedValue(0);
+    vi.mocked(ensureSharedTables).mockResolvedValue();
+    vi.mocked(contentHashesExist).mockResolvedValue(new Set());
+    vi.mocked(getSharedChunksByHash).mockResolvedValue([]);
 
     // Mock cache
     const mockCache = {

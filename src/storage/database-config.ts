@@ -3,6 +3,8 @@ import { getConfigPath, getDbPath } from '../cli/utils/paths.js';
 import { DEFAULT_CONFIG, loadConfig, type LgrepConfig } from './config.js';
 import { readR2Credentials, type R2Credentials } from './keychain.js';
 import { openDatabase, type IndexDatabase } from './lance.js';
+import { ensureSchema } from './migrations.js';
+import { requirePostgresPool } from './postgres.js';
 
 export interface DatabaseSettings {
   mode: 'local' | 's3' | 'postgres';
@@ -210,7 +212,11 @@ export function resolveDatabaseSettingsSync(): DatabaseSettings {
 }
 
 export async function openConfiguredDatabase(): Promise<IndexDatabase> {
-  return openDatabase(await resolveDatabaseSettings());
+  const db = await openDatabase(await resolveDatabaseSettings());
+  if (db.mode === 'postgres') {
+    await ensureSchema(requirePostgresPool(db));
+  }
+  return db;
 }
 
 export function getConfiguredDatabaseLocationSync(): string {

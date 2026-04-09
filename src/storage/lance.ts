@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import type { DatabaseSettings } from './database-config.js';
 import {
   POSTGRES_INDEXES_TABLE,
+  SHARED_CHUNKS_TABLE,
   getPostgresIndexTableName,
   quoteIdentifier,
   requirePostgresPool,
@@ -77,6 +78,11 @@ export interface SearchOptions {
  */
 export interface SearchResult extends DocumentChunk {
   _score: number;
+}
+
+export interface SharedChunkConfig {
+  chunkMaxTokens: number;
+  chunkOverlap: number;
 }
 
 /**
@@ -1478,4 +1484,499 @@ export function rerankerWithMMR(
   }
 
   return selected;
+}
+
+// ---------------------------------------------------------------------------
+// Shared content-addressable chunk store (Postgres only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensure the shared content-addressable tables exist.
+ * Must be called once before any shared read/write operations.
+ */
+export async function ensureSharedTables(
+  db: IndexDatabase,
+  vectorDimensions: number
+): Promise<void> {
+  if (!isPostgresDatabase(db)) {
+    return; // Shared tables are Postgres-only
+  }
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS ${table} (
+      content_hash TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      model TEXT NOT NULL,
+      chunk_max_tokens INTEGER NOT NULL DEFAULT 500,
+      chunk_overlap INTEGER NOT NULL DEFAULT 50,
+      content TEXT NOT NULL,
+      vector vector(${vectorDimensions}) NOT NULL,
+      language TEXT,
+      line_start INTEGER,
+      line_end INTEGER,
+      file_type TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (content_hash, chunk_index, model, chunk_max_tokens, chunk_overlap)
+    )`
+  );
+
+  await pool.query(
+    `ALTER TABLE ${table}
+      ADD COLUMN IF NOT EXISTS chunk_max_tokens INTEGER NOT NULL DEFAULT 500`
+  );
+  await pool.query(
+    `ALTER TABLE ${table}
+      ADD COLUMN IF NOT EXISTS chunk_overlap INTEGER NOT NULL DEFAULT 50`
+  );
+
+  const vectorIdx = quoteIdentifier(`${SHARED_CHUNKS_TABLE}_vector_idx`);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${vectorIdx}
+      ON ${table}
+      USING hnsw (vector vector_cosine_ops)`
+  );
+
+  const hashIdx = quoteIdentifier(`${SHARED_CHUNKS_TABLE}_hash_idx`);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${hashIdx}
+      ON ${table} (content_hash)`
+  );
+
+  const lookupIdx = quoteIdentifier(`${SHARED_CHUNKS_TABLE}_lookup_idx`);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${lookupIdx}
+      ON ${table} (content_hash, model, chunk_max_tokens, chunk_overlap)`
+  );
+}
+
+/**
+ * Insert chunks into the shared content-addressable store.
+ * Uses INSERT ... ON CONFLICT DO NOTHING for concurrent-safe, idempotent writes.
+ */
+export async function addSharedChunks(
+  db: IndexDatabase,
+  model: string,
+  chunks: DocumentChunk[],
+  chunkConfig: SharedChunkConfig
+): Promise<number> {
+  if (chunks.length === 0) return 0;
+  if (!isPostgresDatabase(db)) return 0;
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const values: string[] = [];
+  const params: unknown[] = [];
+
+  for (const chunk of chunks) {
+    const base = params.length;
+    params.push(
+      chunk.contentHash,
+      chunk.chunkIndex,
+      model,
+      chunkConfig.chunkMaxTokens,
+      chunkConfig.chunkOverlap,
+      chunk.content,
+      vectorToSql(chunk.vector),
+      chunk.language ?? null,
+      chunk.lineStart ?? null,
+      chunk.lineEnd ?? null,
+      chunk.fileType,
+      chunk.createdAt
+    );
+    values.push(
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}::vector, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12})`
+    );
+  }
+
+  await pool.query(
+    `INSERT INTO ${table} (
+      content_hash,
+      chunk_index,
+      model,
+      chunk_max_tokens,
+      chunk_overlap,
+      content,
+      vector,
+      language,
+      line_start,
+      line_end,
+      file_type,
+      created_at
+    ) VALUES ${values.join(', ')}
+    ON CONFLICT (content_hash, chunk_index, model, chunk_max_tokens, chunk_overlap) DO NOTHING`,
+    params
+  );
+
+  return chunks.length;
+}
+
+/**
+ * Retrieve shared chunks by content hash.
+ */
+export async function getSharedChunksByHash(
+  db: IndexDatabase,
+  contentHashes: string[],
+  model?: string,
+  chunkConfig?: SharedChunkConfig
+): Promise<DocumentChunk[]> {
+  if (contentHashes.length === 0) return [];
+  if (!isPostgresDatabase(db)) return [];
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const params: unknown[] = [];
+
+  // Build the IN clause for content hashes
+  const hashPlaceholders = contentHashes.map((hash) => {
+    params.push(hash);
+    return `$${params.length}`;
+  });
+
+  let modelClause = '';
+  if (model) {
+    params.push(model);
+    modelClause = ` AND model = $${params.length}`;
+  }
+
+  let chunkConfigClause = '';
+  if (chunkConfig) {
+    params.push(chunkConfig.chunkMaxTokens);
+    const chunkMaxTokensParam = params.length;
+    params.push(chunkConfig.chunkOverlap);
+    chunkConfigClause =
+      ` AND chunk_max_tokens = $${chunkMaxTokensParam} AND chunk_overlap = $${params.length}`;
+  }
+
+  const result = await pool.query<Record<string, unknown>>(
+    `SELECT
+       content_hash,
+       chunk_index,
+       model,
+       content,
+       vector::text AS vector,
+       language,
+       line_start,
+       line_end,
+       file_type,
+       created_at::text AS created_at
+     FROM ${table}
+     WHERE content_hash IN (${hashPlaceholders.join(', ')})${modelClause}${chunkConfigClause}
+     ORDER BY content_hash, chunk_index ASC`,
+    params
+  );
+
+  return result.rows.map((row) => ({
+    id: '', // Shared chunks don't have per-index IDs
+    filePath: '',
+    relativePath: '',
+    contentHash: row['content_hash'] as string,
+    chunkIndex: row['chunk_index'] as number,
+    content: row['content'] as string,
+    vector: parseVectorValue(row['vector']),
+    language: (row['language'] as string) || undefined,
+    lineStart: row['line_start'] != null ? (row['line_start'] as number) : undefined,
+    lineEnd: row['line_end'] != null ? (row['line_end'] as number) : undefined,
+    fileType: row['file_type'] as string,
+    createdAt: row['created_at'] as string,
+  }));
+}
+
+/**
+ * Vector similarity search across the shared chunk store,
+ * optionally filtered to a set of content hashes.
+ */
+export async function searchSharedChunks(
+  db: IndexDatabase,
+  queryVector: Float32Array,
+  options: SearchOptions & { contentHashes?: string[]; model?: string; chunkConfig?: SharedChunkConfig }
+): Promise<SearchResult[]> {
+  if (!isPostgresDatabase(db)) return [];
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const params: unknown[] = [vectorToSql(queryVector)];
+  const clauses: string[] = [];
+
+  if (options.model) {
+    params.push(options.model);
+    clauses.push(`model = $${params.length}`);
+  }
+
+  if (options.contentHashes && options.contentHashes.length > 0) {
+    const hashPlaceholders = options.contentHashes.map((hash) => {
+      params.push(hash);
+      return `$${params.length}`;
+    });
+    clauses.push(`content_hash IN (${hashPlaceholders.join(', ')})`);
+  }
+
+  if (options.chunkConfig) {
+    params.push(options.chunkConfig.chunkMaxTokens);
+    clauses.push(`chunk_max_tokens = $${params.length}`);
+    params.push(options.chunkConfig.chunkOverlap);
+    clauses.push(`chunk_overlap = $${params.length}`);
+  }
+
+  params.push(options.limit);
+
+  const whereClause = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+
+  const result = await pool.query<Record<string, unknown>>(
+    `SELECT
+       content_hash,
+       chunk_index,
+       model,
+       content,
+       vector::text AS vector,
+       language,
+       line_start,
+       line_end,
+       file_type,
+       created_at::text AS created_at,
+       (vector <=> $1::vector) AS _distance
+     FROM ${table}${whereClause}
+     ORDER BY vector <=> $1::vector
+     LIMIT $${params.length}`,
+    params
+  );
+
+  return result.rows.map((row) => ({
+    id: '',
+    filePath: '',
+    relativePath: '',
+    contentHash: row['content_hash'] as string,
+    chunkIndex: row['chunk_index'] as number,
+    content: row['content'] as string,
+    vector: parseVectorValue(row['vector']),
+    language: (row['language'] as string) || undefined,
+    lineStart: row['line_start'] != null ? (row['line_start'] as number) : undefined,
+    lineEnd: row['line_end'] != null ? (row['line_end'] as number) : undefined,
+    fileType: row['file_type'] as string,
+    createdAt: row['created_at'] as string,
+    _score: Number(row['_distance'] ?? 0),
+  }));
+}
+
+/**
+ * Vector similarity search across the shared chunk store,
+ * scoped to a worktree via a manifest JOIN.
+ *
+ * The manifest provides the `relative_path` for each result, making the
+ * search results fully path-aware even though shared_chunks are
+ * content-addressed and path-agnostic.
+ */
+export async function searchSharedChunksForWorktree(
+  db: IndexDatabase,
+  queryVector: Float32Array,
+  worktreeId: string,
+  options: SearchOptions & { model?: string }
+): Promise<SearchResult[]> {
+  if (!isPostgresDatabase(db)) return [];
+
+  const pool = requirePostgresPool(db);
+  const sc = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const wm = quoteIdentifier('lgrep_worktree_manifests');
+  const wt = quoteIdentifier('lgrep_worktrees');
+  const params: unknown[] = [vectorToSql(queryVector), worktreeId];
+  const clauses: string[] = [];
+
+  if (options.model) {
+    params.push(options.model);
+    clauses.push(`w.model = $${params.length}`);
+  }
+
+  params.push(options.limit);
+
+  const extraWhere = clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : '';
+
+  const result = await pool.query<Record<string, unknown>>(
+    `SELECT
+       sc.content_hash,
+       sc.chunk_index,
+       sc.model,
+       sc.content,
+       sc.vector::text AS vector,
+       sc.language,
+       sc.line_start,
+       sc.line_end,
+       sc.file_type,
+       sc.created_at::text AS created_at,
+       wm.relative_path,
+       (sc.vector <=> $1::vector) AS _distance
+     FROM ${sc} sc
+     JOIN ${wm} wm
+       ON sc.content_hash = wm.content_hash
+     JOIN ${wt} w
+       ON w.id = wm.worktree_id
+     WHERE wm.worktree_id = $2
+       AND sc.model = w.model
+       AND sc.chunk_max_tokens = w.chunk_max_tokens
+       AND sc.chunk_overlap = w.chunk_overlap${extraWhere}
+     ORDER BY sc.vector <=> $1::vector
+     LIMIT $${params.length}`,
+    params
+  );
+
+  return result.rows.map((row) => ({
+    id: '',
+    filePath: '',
+    relativePath: row['relative_path'] as string,
+    contentHash: row['content_hash'] as string,
+    chunkIndex: row['chunk_index'] as number,
+    content: row['content'] as string,
+    vector: parseVectorValue(row['vector']),
+    language: (row['language'] as string) || undefined,
+    lineStart: row['line_start'] != null ? (row['line_start'] as number) : undefined,
+    lineEnd: row['line_end'] != null ? (row['line_end'] as number) : undefined,
+    fileType: row['file_type'] as string,
+    createdAt: row['created_at'] as string,
+    _score: Number(row['_distance'] ?? 0),
+  }));
+}
+
+/**
+ * Vector similarity search across the shared chunk store,
+ * scoped to all worktrees within a project (optionally filtered to one worktree).
+ *
+ * This enables cross-worktree search within a project boundary.
+ */
+export async function searchSharedChunksForProject(
+  db: IndexDatabase,
+  queryVector: Float32Array,
+  projectId: string,
+  options: SearchOptions & { model?: string; worktreeId?: string }
+): Promise<(SearchResult & { worktreeName?: string })[]> {
+  if (!isPostgresDatabase(db)) return [];
+
+  const pool = requirePostgresPool(db);
+  const sc = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const wm = quoteIdentifier('lgrep_worktree_manifests');
+  const wt = quoteIdentifier('lgrep_worktrees');
+  const params: unknown[] = [vectorToSql(queryVector), projectId];
+  const clauses: string[] = [];
+
+  if (options.model) {
+    params.push(options.model);
+    clauses.push(`w.model = $${params.length}`);
+  }
+
+  if (options.worktreeId) {
+    params.push(options.worktreeId);
+    clauses.push(`w.id = $${params.length}`);
+  }
+
+  params.push(options.limit);
+
+  const extraWhere = clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : '';
+
+  const result = await pool.query<Record<string, unknown>>(
+    `WITH deduped AS (
+       SELECT DISTINCT ON (sc.content_hash, sc.chunk_index, sc.chunk_max_tokens, sc.chunk_overlap)
+         sc.content_hash,
+         sc.chunk_index,
+         sc.model,
+         sc.content,
+         sc.vector::text AS vector,
+         sc.language,
+         sc.line_start,
+         sc.line_end,
+         sc.file_type,
+         sc.created_at::text AS created_at,
+         wm.relative_path,
+         w.name AS worktree_name,
+         (sc.vector <=> $1::vector) AS _distance
+       FROM ${sc} sc
+       JOIN ${wm} wm ON sc.content_hash = wm.content_hash
+       JOIN ${wt} w ON wm.worktree_id = w.id
+       WHERE w.project_id = $2
+         AND sc.model = w.model
+         AND sc.chunk_max_tokens = w.chunk_max_tokens
+         AND sc.chunk_overlap = w.chunk_overlap${extraWhere}
+       ORDER BY
+         sc.content_hash,
+         sc.chunk_index,
+         sc.chunk_max_tokens,
+         sc.chunk_overlap,
+         sc.vector <=> $1::vector
+     )
+     SELECT
+       sc.content_hash,
+       sc.chunk_index,
+       sc.model,
+       sc.content,
+       sc.vector,
+       sc.language,
+       sc.line_start,
+       sc.line_end,
+       sc.file_type,
+       sc.created_at,
+       sc.relative_path,
+       sc.worktree_name,
+       _distance
+     FROM deduped sc
+     ORDER BY _distance
+     LIMIT $${params.length}`,
+    params
+  );
+
+  return result.rows.map((row) => ({
+    id: '',
+    filePath: '',
+    relativePath: row['relative_path'] as string,
+    contentHash: row['content_hash'] as string,
+    chunkIndex: row['chunk_index'] as number,
+    content: row['content'] as string,
+    vector: parseVectorValue(row['vector']),
+    language: (row['language'] as string) || undefined,
+    lineStart: row['line_start'] != null ? (row['line_start'] as number) : undefined,
+    lineEnd: row['line_end'] != null ? (row['line_end'] as number) : undefined,
+    fileType: row['file_type'] as string,
+    createdAt: row['created_at'] as string,
+    _score: Number(row['_distance'] ?? 0),
+    worktreeName: (row['worktree_name'] as string) || undefined,
+  }));
+}
+
+/**
+ * Check which content hashes already exist in the shared chunk store.
+ * Returns the subset of input hashes that are already stored.
+ */
+export async function contentHashesExist(
+  db: IndexDatabase,
+  contentHashes: string[],
+  model: string,
+  chunkConfig: SharedChunkConfig
+): Promise<Set<string>> {
+  if (contentHashes.length === 0) return new Set();
+  if (!isPostgresDatabase(db)) return new Set();
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const params: unknown[] = [];
+
+  const hashPlaceholders = contentHashes.map((hash) => {
+    params.push(hash);
+    return `$${params.length}`;
+  });
+
+  params.push(model);
+  const modelParam = params.length;
+  params.push(chunkConfig.chunkMaxTokens);
+  const chunkMaxTokensParam = params.length;
+  params.push(chunkConfig.chunkOverlap);
+
+  const result = await pool.query<{ content_hash: string }>(
+    `SELECT DISTINCT content_hash
+       FROM ${table}
+      WHERE content_hash IN (${hashPlaceholders.join(', ')})
+        AND model = $${modelParam}
+        AND chunk_max_tokens = $${chunkMaxTokensParam}
+        AND chunk_overlap = $${params.length}`,
+    params
+  );
+
+  return new Set(result.rows.map((row) => row.content_hash));
 }

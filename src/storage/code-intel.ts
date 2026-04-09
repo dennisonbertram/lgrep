@@ -1,6 +1,13 @@
 import type { CodeSymbol, CodeDependency, CallEdge, SymbolKind, DependencyKind, ImportedName } from '../types/code-intel.js';
 import type { IndexDatabase } from './lance.js';
-import { getPostgresIndexTableName, quoteIdentifier, requirePostgresPool } from './postgres.js';
+import {
+  getPostgresIndexTableName,
+  quoteIdentifier,
+  requirePostgresPool,
+  SHARED_SYMBOLS_TABLE,
+  SHARED_DEPENDENCIES_TABLE,
+  SHARED_CALLS_TABLE,
+} from './postgres.js';
 
 function isPostgresDatabase(db: IndexDatabase): boolean {
   return db.mode === 'postgres';
@@ -989,4 +996,297 @@ export async function getSymbolsWithoutSummaries(
   } catch {
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shared content-addressable code intelligence store (Postgres only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensure the shared code intelligence tables exist.
+ */
+export async function ensureSharedCodeIntelTables(
+  db: IndexDatabase
+): Promise<void> {
+  if (!isPostgresDatabase(db)) return;
+
+  const pool = requirePostgresPool(db);
+
+  // Shared symbols table
+  const symbolsTable = quoteIdentifier(SHARED_SYMBOLS_TABLE);
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS ${symbolsTable} (
+      id SERIAL,
+      content_hash TEXT NOT NULL,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      line_start INTEGER NOT NULL,
+      line_end INTEGER NOT NULL,
+      column_start INTEGER NOT NULL,
+      column_end INTEGER NOT NULL,
+      is_exported INTEGER NOT NULL,
+      is_default_export INTEGER NOT NULL,
+      documentation TEXT NOT NULL,
+      signature TEXT NOT NULL,
+      parent_id TEXT NOT NULL,
+      modifiers JSONB NOT NULL DEFAULT '[]',
+      summary TEXT NOT NULL DEFAULT '',
+      summary_model TEXT NOT NULL DEFAULT '',
+      body_hash TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (content_hash, name, kind, line_start)
+    )`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${SHARED_SYMBOLS_TABLE}_hash_idx`)}
+      ON ${symbolsTable} (content_hash)`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${SHARED_SYMBOLS_TABLE}_name_idx`)}
+      ON ${symbolsTable} (LOWER(name))`
+  );
+
+  // Shared dependencies table
+  const depsTable = quoteIdentifier(SHARED_DEPENDENCIES_TABLE);
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS ${depsTable} (
+      id SERIAL,
+      content_hash TEXT NOT NULL,
+      target_module TEXT NOT NULL,
+      resolved_path TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL,
+      names JSONB NOT NULL DEFAULT '[]',
+      line INTEGER NOT NULL,
+      is_external INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (content_hash, target_module, line)
+    )`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${SHARED_DEPENDENCIES_TABLE}_hash_idx`)}
+      ON ${depsTable} (content_hash)`
+  );
+
+  // Shared calls table
+  const callsTable = quoteIdentifier(SHARED_CALLS_TABLE);
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS ${callsTable} (
+      id SERIAL,
+      content_hash TEXT NOT NULL,
+      caller_name TEXT NOT NULL DEFAULT '',
+      callee_name TEXT NOT NULL,
+      callee_file TEXT NOT NULL DEFAULT '',
+      line INTEGER NOT NULL,
+      "column" INTEGER NOT NULL,
+      is_method_call INTEGER NOT NULL,
+      receiver TEXT NOT NULL DEFAULT '',
+      argument_count INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (content_hash, callee_name, line, "column")
+    )`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${SHARED_CALLS_TABLE}_hash_idx`)}
+      ON ${callsTable} (content_hash)`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${SHARED_CALLS_TABLE}_callee_idx`)}
+      ON ${callsTable} (callee_name)`
+  );
+}
+
+/**
+ * Add symbols to the shared content-addressable store.
+ * Uses INSERT ... ON CONFLICT DO NOTHING for concurrent-safe writes.
+ */
+export async function addSharedSymbols(
+  db: IndexDatabase,
+  contentHash: string,
+  symbols: CodeSymbol[]
+): Promise<void> {
+  if (symbols.length === 0) return;
+  if (!isPostgresDatabase(db)) return;
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_SYMBOLS_TABLE);
+  const values: string[] = [];
+  const params: unknown[] = [];
+
+  for (const symbol of symbols) {
+    const base = params.length;
+    params.push(
+      contentHash,
+      symbol.name,
+      symbol.kind,
+      symbol.range.start.line,
+      symbol.range.end.line,
+      symbol.range.start.column,
+      symbol.range.end.column,
+      symbol.isExported ? 1 : 0,
+      symbol.isDefaultExport ? 1 : 0,
+      symbol.documentation ?? '',
+      symbol.signature ?? '',
+      symbol.parentId ?? '',
+      JSON.stringify(symbol.modifiers),
+      symbol.summary ?? '',
+      symbol.summaryModel ?? '',
+      symbol.bodyHash ?? ''
+    );
+    values.push(
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12}, $${base + 13}::jsonb, $${base + 14}, $${base + 15}, $${base + 16})`
+    );
+  }
+
+  await pool.query(
+    `INSERT INTO ${table} (
+      content_hash, name, kind,
+      line_start, line_end, column_start, column_end,
+      is_exported, is_default_export,
+      documentation, signature, parent_id,
+      modifiers, summary, summary_model, body_hash
+    ) VALUES ${values.join(', ')}
+    ON CONFLICT (content_hash, name, kind, line_start) DO NOTHING`,
+    params
+  );
+}
+
+/**
+ * Add dependencies to the shared content-addressable store.
+ */
+export async function addSharedDependencies(
+  db: IndexDatabase,
+  contentHash: string,
+  deps: CodeDependency[]
+): Promise<void> {
+  if (deps.length === 0) return;
+  if (!isPostgresDatabase(db)) return;
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_DEPENDENCIES_TABLE);
+  const values: string[] = [];
+  const params: unknown[] = [];
+
+  for (const dep of deps) {
+    const base = params.length;
+    params.push(
+      contentHash,
+      dep.targetModule,
+      dep.resolvedPath ?? '',
+      dep.kind,
+      JSON.stringify(dep.names),
+      dep.line,
+      dep.isExternal ? 1 : 0
+    );
+    values.push(
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}::jsonb, $${base + 6}, $${base + 7})`
+    );
+  }
+
+  await pool.query(
+    `INSERT INTO ${table} (
+      content_hash, target_module, resolved_path,
+      kind, names, line, is_external
+    ) VALUES ${values.join(', ')}
+    ON CONFLICT (content_hash, target_module, line) DO NOTHING`,
+    params
+  );
+}
+
+/**
+ * Add calls to the shared content-addressable store.
+ */
+export async function addSharedCalls(
+  db: IndexDatabase,
+  contentHash: string,
+  calls: CallEdge[]
+): Promise<void> {
+  if (calls.length === 0) return;
+  if (!isPostgresDatabase(db)) return;
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_CALLS_TABLE);
+  const values: string[] = [];
+  const params: unknown[] = [];
+
+  for (const call of calls) {
+    const base = params.length;
+    params.push(
+      contentHash,
+      call.callerFile ?? '',
+      call.calleeName,
+      call.calleeFile ?? '',
+      call.position.line,
+      call.position.column,
+      call.isMethodCall ? 1 : 0,
+      call.receiver ?? '',
+      call.argumentCount
+    );
+    values.push(
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`
+    );
+  }
+
+  await pool.query(
+    `INSERT INTO ${table} (
+      content_hash, caller_name, callee_name, callee_file,
+      line, "column", is_method_call, receiver, argument_count
+    ) VALUES ${values.join(', ')}
+    ON CONFLICT (content_hash, callee_name, line, "column") DO NOTHING`,
+    params
+  );
+}
+
+/**
+ * Retrieve shared symbols by content hash.
+ */
+export async function getSharedSymbolsByHash(
+  db: IndexDatabase,
+  contentHashes: string[]
+): Promise<CodeSymbol[]> {
+  if (contentHashes.length === 0) return [];
+  if (!isPostgresDatabase(db)) return [];
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_SYMBOLS_TABLE);
+  const params: unknown[] = [];
+
+  const hashPlaceholders = contentHashes.map((hash) => {
+    params.push(hash);
+    return `$${params.length}`;
+  });
+
+  const result = await pool.query<Record<string, unknown>>(
+    `SELECT * FROM ${table}
+      WHERE content_hash IN (${hashPlaceholders.join(', ')})`,
+    params
+  );
+
+  return result.rows.map((row) => ({
+    id: String(row['id']),
+    name: row['name'] as string,
+    kind: row['kind'] as SymbolKind,
+    filePath: '', // Shared symbols don't store file paths
+    relativePath: '',
+    range: {
+      start: {
+        line: row['line_start'] as number,
+        column: row['column_start'] as number,
+      },
+      end: {
+        line: row['line_end'] as number,
+        column: row['column_end'] as number,
+      },
+    },
+    isExported: asBoolean(row['is_exported']),
+    isDefaultExport: asBoolean(row['is_default_export']),
+    documentation: (row['documentation'] as string) || undefined,
+    signature: (row['signature'] as string) || undefined,
+    parentId: (row['parent_id'] as string) || undefined,
+    modifiers: Array.isArray(row['modifiers'])
+      ? (row['modifiers'] as string[])
+      : JSON.parse((row['modifiers'] as string) || '[]') as string[],
+    summary: (row['summary'] as string) || undefined,
+    summaryModel: (row['summary_model'] as string) || undefined,
+    bodyHash: (row['body_hash'] as string) || undefined,
+  }));
 }

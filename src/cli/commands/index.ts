@@ -12,6 +12,7 @@ import {
   createIndex,
   getIndex,
   addChunks,
+  addSharedChunks,
   updateIndexStatus,
   getFileContentHashes,
   getFileMetadataHashes,
@@ -20,6 +21,9 @@ import {
   deleteFileMetadata,
   deleteChunksByFilePath,
   deleteAllChunks,
+  ensureSharedTables,
+  contentHashesExist,
+  getSharedChunksByHash,
   type DocumentChunk,
 } from '../../storage/lance.js';
 import {
@@ -36,8 +40,12 @@ import {
   addSymbols,
   addDependencies,
   addCalls,
+  addSharedSymbols,
+  addSharedDependencies,
+  addSharedCalls,
   updateSymbolSummary,
   createCodeIntelTables,
+  ensureSharedCodeIntelTables,
 } from '../../storage/code-intel.js';
 import type { CodeSymbol, CodeDependency, CallEdge } from '../../types/code-intel.js';
 import { createSummarizerClient } from '../../core/summarizer.js';
@@ -193,6 +201,10 @@ export async function runIndexCommand(
         await createCodeIntelTables(db, indexName);
       }
 
+      // Ensure shared content-addressable tables exist (Postgres only, no-op for local)
+      await ensureSharedTables(db, dimensions);
+      await ensureSharedCodeIntelTables(db);
+
       // Walk files
       spinner?.update('Discovering files...');
       const files = await walkFiles(absolutePath, {
@@ -311,6 +323,20 @@ export async function runIndexCommand(
           })
         );
 
+        // Phase 2.5: Check shared store for already-embedded content hashes
+        const allContentHashes = chunkingResults
+          .filter((r) => r != null)
+          .map((r) => r.currentHash);
+        const existingSharedHashes = await contentHashesExist(
+          db,
+          allContentHashes,
+          embedClient.model,
+          {
+            chunkMaxTokens: config.chunkSize,
+            chunkOverlap: config.chunkOverlap,
+          }
+        );
+
         // Phase 3: Check cache for embeddings and collect uncached chunks
         type UncachedChunk = {
           chunkContent: string;
@@ -331,10 +357,72 @@ export async function runIndexCommand(
           }
         }
 
+        // Collect hashes that need shared store lookup
+        const sharedLookupHashes: string[] = [];
+        const sharedLookupFileIndexes: number[] = [];
+        for (let fileIndex = 0; fileIndex < chunkingResults.length; fileIndex++) {
+          const result = chunkingResults[fileIndex];
+          if (result && existingSharedHashes.has(result.currentHash)) {
+            sharedLookupHashes.push(result.currentHash);
+            sharedLookupFileIndexes.push(fileIndex);
+          }
+        }
+
+        // Fetch shared chunks for files that already exist in the shared store
+        const sharedChunksMap = new Map<string, DocumentChunk[]>();
+        if (sharedLookupHashes.length > 0) {
+          const sharedChunks = await getSharedChunksByHash(
+            db,
+            sharedLookupHashes,
+            embedClient.model,
+            {
+              chunkMaxTokens: config.chunkSize,
+              chunkOverlap: config.chunkOverlap,
+            },
+          );
+          for (const chunk of sharedChunks) {
+            const existing = sharedChunksMap.get(chunk.contentHash) ?? [];
+            existing.push(chunk);
+            sharedChunksMap.set(chunk.contentHash, existing);
+          }
+        }
+
+        // Files resolved from shared store are marked so we skip embedding
+        const resolvedFromShared = new Set<number>();
+
         for (let fileIndex = 0; fileIndex < chunkingResults.length; fileIndex++) {
           const result = chunkingResults[fileIndex];
           const docChunks = cachedDocumentChunks.get(fileIndex);
           if (!result || !docChunks) continue;
+
+          // Try to resolve from shared store first
+          const sharedForFile = sharedChunksMap.get(result.currentHash);
+          if (sharedForFile && sharedForFile.length >= result.textChunks.length) {
+            // Build doc chunks from shared store vectors
+            for (let chunkIndex = 0; chunkIndex < result.textChunks.length; chunkIndex++) {
+              const textChunk = result.textChunks[chunkIndex];
+              if (!textChunk) continue;
+
+              const sharedChunk = sharedForFile.find((sc) => sc.chunkIndex === textChunk.index);
+              if (sharedChunk) {
+                docChunks[chunkIndex] = {
+                  id: randomUUID(),
+                  filePath: result.file.absolutePath,
+                  relativePath: result.file.relativePath,
+                  contentHash: result.contentHash,
+                  chunkIndex: textChunk.index,
+                  content: textChunk.content,
+                  vector: sharedChunk.vector,
+                  lineStart: textChunk.startLine,
+                  lineEnd: textChunk.endLine,
+                  fileType: result.fileType,
+                  createdAt: new Date().toISOString(),
+                };
+              }
+            }
+            resolvedFromShared.add(fileIndex);
+            continue;
+          }
 
           for (let chunkIndex = 0; chunkIndex < result.textChunks.length; chunkIndex++) {
             const textChunk = result.textChunks[chunkIndex];
@@ -461,6 +549,11 @@ export async function runIndexCommand(
             while (pendingChunks.length >= dbBatchSize) {
               const batch = pendingChunks.splice(0, dbBatchSize);
               await addChunks(db, handle, batch);
+              // Dual-write to shared content-addressable store
+              await addSharedChunks(db, embedClient.model, batch, {
+                chunkMaxTokens: config.chunkSize,
+                chunkOverlap: config.chunkOverlap,
+              });
               totalChunks += batch.length;
             }
           }
@@ -488,6 +581,8 @@ export async function runIndexCommand(
                 result.content
               );
               await addSymbols(db, indexName, symbols);
+              // Dual-write to shared content-addressable store
+              await addSharedSymbols(db, result.currentHash, symbols);
               counts.symbols = symbols.length;
 
               // Summarize symbols if enabled
@@ -525,12 +620,16 @@ export async function runIndexCommand(
               const rawDeps = await extractDependencies(result.content, result.file.absolutePath);
               const deps = convertDependencies(rawDeps, result.file.absolutePath);
               await addDependencies(db, indexName, deps);
+              // Dual-write to shared content-addressable store
+              await addSharedDependencies(db, result.currentHash, deps);
               counts.deps = deps.length;
 
               // Extract calls
               const rawCalls = await extractCalls(result.content, result.file.absolutePath);
               const calls = convertCalls(rawCalls, result.file.absolutePath, result.file.relativePath);
               await addCalls(db, indexName, calls);
+              // Dual-write to shared content-addressable store
+              await addSharedCalls(db, result.currentHash, calls);
               counts.calls = calls.length;
             } catch {
               // Gracefully handle code intelligence extraction errors
@@ -558,6 +657,11 @@ export async function runIndexCommand(
       // Flush any remaining chunks after all files are processed
       if (pendingChunks.length > 0) {
         await addChunks(db, handle, pendingChunks);
+        // Dual-write to shared content-addressable store
+        await addSharedChunks(db, embedClient.model, pendingChunks, {
+          chunkMaxTokens: config.chunkSize,
+          chunkOverlap: config.chunkOverlap,
+        });
         totalChunks += pendingChunks.length;
       }
 

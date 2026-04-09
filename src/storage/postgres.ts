@@ -3,6 +3,11 @@ import type { Pool } from 'pg';
 
 export const POSTGRES_INDEXES_TABLE = 'lgrep_indexes';
 
+export const SHARED_CHUNKS_TABLE = 'lgrep_shared_chunks';
+export const SHARED_SYMBOLS_TABLE = 'lgrep_shared_symbols';
+export const SHARED_DEPENDENCIES_TABLE = 'lgrep_shared_dependencies';
+export const SHARED_CALLS_TABLE = 'lgrep_shared_calls';
+
 export type PostgresIndexTableKind =
   | 'chunks'
   | 'files'

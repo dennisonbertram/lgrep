@@ -35,6 +35,24 @@ import {
   runDaemonQueryCommand,
   runDaemonLogsCommand,
 } from './commands/daemon.js';
+import {
+  runWorktreeCreateCommand,
+  runWorktreeForkCommand,
+  runWorktreeListCommand,
+  runWorktreeDiffCommand,
+  runWorktreeDeleteCommand,
+  runWorktreeUpdateCommand,
+  runWorktreeGcCommand,
+} from './commands/worktree.js';
+import {
+  runProjectCreateCommand,
+  runProjectListCommand,
+  runProjectInfoCommand,
+  runProjectConfigSetCommand,
+  runProjectDeleteCommand,
+} from './commands/project.js';
+import { runServerStartCommand, runServerStatusCommand } from './commands/server.js';
+import { runGcCommand } from './commands/gc.js';
 import { formatAsJson, formatContextMarkdown } from './commands/json-formatter.js';
 import { detectIndexForDirectory } from './utils/auto-detect.js';
 import { deleteIndex } from '../storage/lance.js';
@@ -228,6 +246,8 @@ program
   .option('--usages <symbol>', 'Find usages of a symbol')
   .option('--definition <symbol>', 'Find symbol definition')
   .option('--type <kind>', 'Filter by symbol type (function, class, interface, etc.)')
+  .option('-w, --worktree <name>', 'Search within a worktree (uses shared chunk store)')
+  .option('-p, --project <name>', 'Search within a project (all worktrees or combined with --worktree)')
   .option('-j, --json', 'Output as JSON')
   .action(async (query: string, options: {
     index?: string;
@@ -236,6 +256,8 @@ program
     usages?: string;
     definition?: string;
     type?: string;
+    worktree?: string;
+    project?: string;
     json?: boolean;
   }) => {
     try {
@@ -251,6 +273,8 @@ program
         usages: options.usages,
         definition: options.definition,
         type: options.type,
+        worktree: options.worktree,
+        project: options.project,
         json: options.json,
       });
 
@@ -1791,6 +1815,529 @@ daemonCmd
     } catch (err) {
       if (options.json) {
         console.log(formatAsJson('error', err as Error));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Worktree commands - lightweight manifest-based views over shared chunk store
+const worktreeCmd = program
+  .command('worktree')
+  .description('Manage worktree manifests for fast branch forking');
+
+worktreeCmd
+  .command('create <path>')
+  .description('Create a new worktree from a directory (full index into shared store + manifest)')
+  .requiredOption('-n, --name <name>', 'Worktree name')
+  .option('-b, --branch <branch>', 'Git branch name')
+  .option('--project <name>', 'Project to create the worktree under')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (path: string, options: { name: string; branch?: string; project?: string; json?: boolean }) => {
+    try {
+      const result = await runWorktreeCreateCommand({
+        name: options.name,
+        path,
+        branch: options.branch,
+        project: options.project,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(result.success ? 0 : 1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command('fork <parent>')
+  .description('Fork an existing worktree (fast — only processes changed files)')
+  .requiredOption('-n, --name <name>', 'New worktree name')
+  .requiredOption('-p, --path <path>', 'Path to the new branch directory')
+  .option('-b, --branch <branch>', 'Git branch name')
+  .option('--project <name>', 'Project scope for parent lookup')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (parent: string, options: { name: string; path: string; branch?: string; project?: string; json?: boolean }) => {
+    try {
+      const result = await runWorktreeForkCommand({
+        parent,
+        name: options.name,
+        path: options.path,
+        branch: options.branch,
+        project: options.project,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(result.success ? 0 : 1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command('list')
+  .description('List all worktrees with stats')
+  .option('--project <name>', 'Filter worktrees by project')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { project?: string; json?: boolean }) => {
+    try {
+      const worktrees = await runWorktreeListCommand({ project: options.project, json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify(worktrees, null, 2));
+        process.exit(0);
+      }
+
+      if (worktrees.length === 0) {
+        console.log('No worktrees found.');
+        return;
+      }
+
+      console.log(`\n  Worktrees (${worktrees.length}):\n`);
+      for (const wt of worktrees) {
+        const parent = wt.parentId ? ` (forked)` : '';
+        const branch = wt.branch ? ` [${wt.branch}]` : '';
+        console.log(`  ${wt.name}${branch}${parent}`);
+        console.log(`    Status: ${wt.status}  Files: ${wt.fileCount}  Chunks: ${wt.chunkCount}`);
+        if (wt.rootPath) console.log(`    Path: ${wt.rootPath}`);
+        console.log('');
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command('diff <a> <b>')
+  .description('Show file differences between two worktrees')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (a: string, b: string, options: { json?: boolean }) => {
+    try {
+      const diffs = await runWorktreeDiffCommand(a, b, { json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify(diffs, null, 2));
+        process.exit(0);
+      }
+
+      if (diffs.length === 0) {
+        console.log('No differences found.');
+        return;
+      }
+
+      const symbols: Record<string, string> = {
+        added: '+',
+        deleted: '-',
+        modified: '~',
+      };
+
+      console.log(`\n  Diff: ${a} ↔ ${b} (${diffs.length} changes)\n`);
+      for (const d of diffs) {
+        console.log(`  ${symbols[d.changeType] || '?'} ${d.path}`);
+      }
+      console.log('');
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command('delete <name>')
+  .description('Delete a worktree (shared chunks remain for other worktrees)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name: string, options: { json?: boolean }) => {
+    try {
+      const deleted = await runWorktreeDeleteCommand(name, { json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify({ success: deleted }));
+        process.exit(deleted ? 0 : 1);
+      }
+
+      if (deleted) {
+        console.log(`Deleted worktree "${name}".`);
+      } else {
+        console.error(`Worktree "${name}" not found.`);
+        process.exit(1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command('update <name>')
+  .description('Incrementally update a worktree from its filesystem path')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name: string, options: { json?: boolean }) => {
+    try {
+      const result = await runWorktreeUpdateCommand(name, { json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(result.success ? 0 : 1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command('gc')
+  .description('Garbage-collect orphaned shared chunks not referenced by any worktree')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    try {
+      const deleted = await runWorktreeGcCommand({ json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify({ chunksDeleted: deleted }));
+        process.exit(0);
+      }
+
+      if (deleted > 0) {
+        console.log(`Garbage collected ${deleted} orphaned shared chunk(s).`);
+      } else {
+        console.log('No orphaned shared chunks found.');
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Project commands - multi-project namespacing and isolation
+const projectCmd = program
+  .command('project')
+  .description('Manage projects for namespace isolation and per-project configuration');
+
+projectCmd
+  .command('create <name>')
+  .description('Create a new project with its own embedding model configuration')
+  .option('-m, --model <model>', 'Embedding model (defaults to global config)')
+  .option('-r, --repo <url>', 'Git remote URL')
+  .option('--display-name <name>', 'Human-readable display name')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name: string, options: { model?: string; repo?: string; displayName?: string; json?: boolean }) => {
+    try {
+      const project = await runProjectCreateCommand({
+        name,
+        model: options.model,
+        repo: options.repo,
+        displayName: options.displayName,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(project, null, 2));
+        process.exit(0);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+projectCmd
+  .command('list')
+  .description('List all projects')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    try {
+      const projects = await runProjectListCommand({ json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify(projects, null, 2));
+        process.exit(0);
+      }
+
+      if (projects.length === 0) {
+        console.log('No projects found.');
+        return;
+      }
+
+      console.log(`\n  Projects (${projects.length}):\n`);
+      for (const p of projects) {
+        const display = p.displayName ? ` (${p.displayName})` : '';
+        const repo = p.repoUrl ? `  Repo: ${p.repoUrl}` : '';
+        console.log(`  ${p.name}${display}`);
+        console.log(`    Model: ${p.model}${repo}`);
+        console.log('');
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+projectCmd
+  .command('info <name>')
+  .description('Show project details, stats, and worktrees')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name: string, options: { json?: boolean }) => {
+    try {
+      const info = await runProjectInfoCommand(name, { json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify(info, null, 2));
+        process.exit(0);
+      }
+
+      const { project: p, stats: s, worktrees } = info;
+      console.log(`\nProject: ${p.name}`);
+      if (p.displayName) console.log(`  Display name: ${p.displayName}`);
+      console.log(`  Model: ${p.model}`);
+      if (p.repoUrl) console.log(`  Repo: ${p.repoUrl}`);
+      console.log(`  Chunk config: ${p.chunkMaxTokens} tokens, ${p.chunkOverlap} overlap`);
+      console.log(`  Worktrees: ${s.worktreeCount}`);
+      console.log(`  Total files: ${s.totalFiles.toLocaleString()} (across all worktrees)`);
+      console.log(`  Unique files: ${s.uniqueFiles.toLocaleString()}`);
+      console.log(`  Total chunks: ${s.totalChunks.toLocaleString()} (across all worktrees)`);
+      console.log(`  Unique chunks: ${s.uniqueChunks.toLocaleString()} (in shared store)`);
+      if (s.storageSavingsPercent > 0) {
+        console.log(`  Storage savings: ${s.storageSavingsPercent}%`);
+      }
+
+      if (worktrees.length > 0) {
+        console.log(`\n  Worktrees:`);
+        for (const wt of worktrees) {
+          const branch = wt.branch ? ` [${wt.branch}]` : '';
+          console.log(`    ${wt.name}${branch} — ${wt.status}, ${wt.fileCount} files, ${wt.chunkCount} chunks`);
+        }
+      }
+      console.log('');
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+const projectConfigCmd = projectCmd
+  .command('config <name>')
+  .description('Manage per-project configuration');
+
+projectConfigCmd
+  .command('set <key> <value>')
+  .description('Set a project config value (model, chunkMaxTokens, chunkOverlap, repo, displayName, excludePatterns)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (key: string, value: string, options: { json?: boolean }) => {
+    try {
+      // The parent command captures <name>, access it via parent args
+      const projectName = projectConfigCmd.args[0];
+      if (!projectName) throw new Error('Project name is required');
+
+      const updated = await runProjectConfigSetCommand(projectName, key, value, { json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify(updated, null, 2));
+        process.exit(0);
+      }
+
+      if (updated) {
+        console.log(`Updated "${key}" for project "${updated.name}".`);
+      } else {
+        console.error('Project not found.');
+        process.exit(1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+projectCmd
+  .command('delete <name>')
+  .description('Delete a project (cascade deletes all worktrees and manifests)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name: string, options: { json?: boolean }) => {
+    try {
+      const deleted = await runProjectDeleteCommand(name, { json: options.json });
+
+      if (options.json) {
+        console.log(JSON.stringify({ success: deleted }));
+        process.exit(deleted ? 0 : 1);
+      }
+
+      if (deleted) {
+        console.log(`Deleted project "${name}" and all its worktrees.`);
+      } else {
+        console.error(`Project "${name}" not found.`);
+        process.exit(1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// Server commands - shared HTTP query server
+const serverCmd = program
+  .command('server')
+  .description('Manage the lgrep query server (replaces per-index daemons for cloud deployment)');
+
+serverCmd
+  .command('start')
+  .description('Start the lgrep query server')
+  .option('--port <port>', 'Port to listen on', '8420')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { port?: string; json?: boolean }) => {
+    try {
+      const result = await runServerStartCommand({
+        port: options.port ? parseInt(options.port, 10) : undefined,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.success) process.exit(1);
+        return;
+      }
+
+      if (!result.success) {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+serverCmd
+  .command('status')
+  .description('Show query server status and health')
+  .option('--port <port>', 'Port to check', '8420')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { port?: string; json?: boolean }) => {
+    try {
+      const result = await runServerStatusCommand({
+        port: options.port ? parseInt(options.port, 10) : undefined,
+        json: options.json,
+      }) as Record<string, unknown>;
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(0);
+      }
+
+      if (result['status'] === 'not_running') {
+        console.log(`Server not running at ${result['url']}`);
+        return;
+      }
+
+      console.log(`\nServer Status: ${result['status']}`);
+      console.log(`  Uptime: ${result['uptime']}`);
+      const pg = result['postgres'] as Record<string, unknown> | undefined;
+      if (pg) {
+        console.log(`  Postgres: ${pg['connected'] ? 'connected' : 'disconnected'}`);
+        console.log(`    Pool: ${pg['active_connections']} active / ${pg['idle_connections']} idle`);
+      }
+      const stats = result['stats'] as Record<string, unknown> | undefined;
+      if (stats) {
+        console.log(`  Projects: ${stats['projects']}`);
+        console.log(`  Worktrees: ${stats['worktrees']}`);
+        console.log(`  Shared chunks: ${stats['shared_chunks']}`);
+      }
+      console.log('');
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// GC command - garbage collect orphaned shared data
+program
+  .command('gc')
+  .description('Garbage-collect orphaned shared chunks, code intelligence, and stale worktrees')
+  .option('--dry-run', 'Report what would be deleted without actually deleting')
+  .option('--stale-days <days>', 'Also clean up worktrees not updated in N days')
+  .option('--project <name>', 'Scope GC to a specific project')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { dryRun?: boolean; staleDays?: string; project?: string; json?: boolean }) => {
+    try {
+      const result = await runGcCommand({
+        dryRun: options.dryRun,
+        staleDays: options.staleDays ? parseInt(options.staleDays, 10) : undefined,
+        project: options.project,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(result.success ? 0 : 1);
+      }
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
       } else {
         console.error(`Error: ${(err as Error).message}`);
       }

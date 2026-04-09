@@ -218,6 +218,12 @@ vi.mock('pg', () => {
         return { rows: [{ count: String(table.size) }] };
       }
 
+      if (normalized.startsWith('SELECT COUNT(DISTINCT file_path)::text AS count FROM "lgrep_chunks_')) {
+        const table = getChunkTable(extractQuotedIdentifier(normalized));
+        const count = new Set([...table.values()].map((row) => row.file_path)).size;
+        return { rows: [{ count: String(count) }] };
+      }
+
       if (normalized.includes('SELECT DISTINCT ON (file_path) file_path, content_hash')) {
         const table = getChunkTable(extractQuotedIdentifier(normalized));
         const byFile = new Map<string, ChunkRow>();

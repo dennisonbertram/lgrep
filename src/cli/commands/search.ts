@@ -1,15 +1,25 @@
 import { createEmbeddingClient } from '../../core/embeddings.js';
-import { loadConfig } from '../../storage/config.js';
 import {
   getIndex,
   searchChunks,
+  searchSharedChunksForWorktree,
+  searchSharedChunksForProject,
   rerankerWithMMR,
+  ensureSharedTables,
   type SearchResult,
 } from '../../storage/lance.js';
 import { getCalls, searchSymbols, getSymbols } from '../../storage/code-intel.js';
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { createSpinner } from '../utils/progress.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
+import {
+  ensureWorktreeTables,
+  getWorktree,
+} from '../../storage/worktree.js';
+import {
+  ensureProjectTables,
+  getProject,
+} from '../../storage/project.js';
 
 /**
  * Options for the search command.
@@ -23,6 +33,8 @@ export interface SearchOptions {
   usages?: string;      // Find usages of this symbol
   definition?: string;  // Find definition of this symbol
   type?: string;        // Filter by symbol kind
+  worktree?: string;    // Search within a worktree (shared chunk store)
+  project?: string;     // Search within a project (all worktrees or specific one)
 }
 
 /**
@@ -115,34 +127,141 @@ export async function runSearchCommand(
       throw new Error('Diversity parameter must be between 0.0 and 1.0');
     }
 
-    // Auto-detect index if not provided
-    let indexName: string;
-    if (options.index) {
-      indexName = options.index;
-    } else {
-      spinner?.update('Auto-detecting index for current directory...');
-      const detected = await detectIndexForDirectory();
-      if (!detected) {
-        throw new Error(
-          'No index found for current directory. Either:\n' +
-          '  1. Use --index <name> to specify an index\n' +
-          '  2. Run `lgrep index .` to index the current directory\n' +
-          '  3. Navigate to an indexed directory'
-        );
-      }
-      indexName = detected;
-      spinner?.update(`Using auto-detected index "${indexName}"...`);
-    }
-
-    // Load config
-    spinner?.update('Loading configuration...');
-    const config = await loadConfig();
-
     // Open database
     spinner?.update('Opening database...');
     const db = await openConfiguredDatabase();
 
     try {
+      const useSharedSearch = Boolean(
+        (options.project || options.worktree) &&
+        !options.usages &&
+        !options.definition &&
+        !options.type
+      );
+
+      if (useSharedSearch) {
+        // Project-scoped search (all worktrees in a project, or one specific worktree)
+        if (options.project) {
+          await ensureProjectTables(db);
+          await ensureWorktreeTables(db);
+
+          const proj = await getProject(db, options.project);
+          if (!proj) throw new Error(`Project "${options.project}" not found`);
+
+          let worktreeId: string | undefined;
+          if (options.worktree) {
+            const wt = await getWorktree(db, options.worktree, { projectId: proj.id });
+            if (!wt) throw new Error(`Worktree "${options.worktree}" not found in project "${proj.name}"`);
+            worktreeId = wt.id;
+          }
+
+          spinner?.update('Initializing embedding model...');
+          const embedClient = createEmbeddingClient({ model: proj.model });
+
+          spinner?.update('Generating query embedding...');
+          const queryResult = await embedClient.embed(query);
+          const queryEmbedding = queryResult.embeddings[0];
+          if (!queryEmbedding) throw new Error('Failed to generate embedding for query');
+          const queryVector = new Float32Array(queryEmbedding);
+
+          await ensureSharedTables(db, proj.modelDims);
+
+          const scope = worktreeId ? `worktree "${options.worktree}"` : `project "${proj.name}"`;
+          spinner?.update(`Searching ${scope}...`);
+          const searchResults = await searchSharedChunksForProject(
+            db, queryVector, proj.id, { limit, model: proj.model, worktreeId },
+          );
+
+          spinner?.update('Reranking results...');
+          const rerankedResults = rerankerWithMMR(searchResults, queryVector, diversity);
+
+          const results: SearchResultItem[] = rerankedResults.map((r) => ({
+            filePath: r.filePath,
+            relativePath: r.relativePath,
+            content: r.content,
+            score: r._score,
+            lineStart: r.lineStart,
+            lineEnd: r.lineEnd,
+            chunkIndex: r.chunkIndex,
+          }));
+
+          spinner?.succeed(`Found ${results.length} results for "${query}" in ${scope}`);
+
+          return {
+            success: true,
+            query,
+            indexName: proj.name,
+            results,
+          };
+        }
+
+        // Worktree-scoped search (uses shared chunk store + manifest)
+        if (options.worktree) {
+          await ensureWorktreeTables(db);
+          const wt = await getWorktree(db, options.worktree);
+          if (!wt) {
+            throw new Error(`Worktree "${options.worktree}" not found`);
+          }
+
+          spinner?.update('Initializing embedding model...');
+          const embedClient = createEmbeddingClient({ model: wt.model });
+
+          spinner?.update('Generating query embedding...');
+          const queryResult = await embedClient.embed(query);
+          const queryEmbedding = queryResult.embeddings[0];
+          if (!queryEmbedding) throw new Error('Failed to generate embedding for query');
+          const queryVector = new Float32Array(queryEmbedding);
+
+          await ensureSharedTables(db, wt.modelDims);
+
+          spinner?.update(`Searching worktree "${wt.name}"...`);
+          const searchResults = await searchSharedChunksForWorktree(
+            db, queryVector, wt.id, { limit, model: wt.model },
+          );
+
+          spinner?.update('Reranking results...');
+          const rerankedResults = rerankerWithMMR(searchResults, queryVector, diversity);
+
+          const results: SearchResultItem[] = rerankedResults.map((r) => ({
+            filePath: r.filePath,
+            relativePath: r.relativePath,
+            content: r.content,
+            score: r._score,
+            lineStart: r.lineStart,
+            lineEnd: r.lineEnd,
+            chunkIndex: r.chunkIndex,
+          }));
+
+          spinner?.succeed(`Found ${results.length} results for "${query}" in worktree "${wt.name}"`);
+
+          return {
+            success: true,
+            query,
+            indexName: wt.name,
+            results,
+          };
+        }
+      }
+
+      // Auto-detect index if not provided
+      let indexName: string;
+      if (options.index) {
+        indexName = options.index;
+      } else {
+        spinner?.update('Auto-detecting index for current directory...');
+        const detected = await detectIndexForDirectory();
+        if (!detected) {
+          throw new Error(
+            'No index found for current directory. Either:\n' +
+            '  1. Use --index <name> to specify an index\n' +
+            '  2. Run `lgrep index .` to index the current directory\n' +
+            '  3. Navigate to an indexed directory'
+          );
+        }
+        indexName = detected;
+        spinner?.update(`Using auto-detected index "${indexName}"...`);
+      }
+
       // Get the index
       spinner?.update(`Loading index "${indexName}"...`);
       const handle = await getIndex(db, indexName);
