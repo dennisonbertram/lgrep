@@ -3,13 +3,19 @@ import { loadConfig } from '../../storage/config.js';
 import {
   getIndex,
   searchChunks,
+  searchSharedChunksForWorktree,
   rerankerWithMMR,
+  ensureSharedTables,
   type SearchResult,
 } from '../../storage/lance.js';
 import { getCalls, searchSymbols, getSymbols } from '../../storage/code-intel.js';
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { createSpinner } from '../utils/progress.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
+import {
+  ensureWorktreeTables,
+  getWorktree,
+} from '../../storage/worktree.js';
 
 /**
  * Options for the search command.
@@ -23,6 +29,7 @@ export interface SearchOptions {
   usages?: string;      // Find usages of this symbol
   definition?: string;  // Find definition of this symbol
   type?: string;        // Filter by symbol kind
+  worktree?: string;    // Search within a worktree (shared chunk store)
 }
 
 /**
@@ -258,6 +265,53 @@ export async function runSearchCommand(
           symbolType: options.type,
           symbols,
           count: symbols.length,
+        };
+      }
+
+      // Worktree-scoped search (uses shared chunk store + manifest)
+      if (options.worktree) {
+        await ensureWorktreeTables(db);
+        const wt = await getWorktree(db, options.worktree);
+        if (!wt) {
+          throw new Error(`Worktree "${options.worktree}" not found`);
+        }
+
+        spinner?.update('Initializing embedding model...');
+        const embedClient = createEmbeddingClient({ model: wt.model });
+
+        spinner?.update('Generating query embedding...');
+        const queryResult = await embedClient.embed(query);
+        const queryEmbedding = queryResult.embeddings[0];
+        if (!queryEmbedding) throw new Error('Failed to generate embedding for query');
+        const queryVector = new Float32Array(queryEmbedding);
+
+        await ensureSharedTables(db, wt.modelDims);
+
+        spinner?.update(`Searching worktree "${wt.name}"...`);
+        const searchResults = await searchSharedChunksForWorktree(
+          db, queryVector, wt.id, { limit, model: wt.model },
+        );
+
+        spinner?.update('Reranking results...');
+        const rerankedResults = rerankerWithMMR(searchResults, queryVector, diversity);
+
+        const results: SearchResultItem[] = rerankedResults.map((r) => ({
+          filePath: r.filePath,
+          relativePath: r.relativePath,
+          content: r.content,
+          score: r._score,
+          lineStart: r.lineStart,
+          lineEnd: r.lineEnd,
+          chunkIndex: r.chunkIndex,
+        }));
+
+        spinner?.succeed(`Found ${results.length} results for "${query}" in worktree "${wt.name}"`);
+
+        return {
+          success: true,
+          query,
+          indexName: wt.name,
+          results,
         };
       }
 

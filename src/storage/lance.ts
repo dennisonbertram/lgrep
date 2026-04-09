@@ -1717,6 +1717,77 @@ export async function searchSharedChunks(
 }
 
 /**
+ * Vector similarity search across the shared chunk store,
+ * scoped to a worktree via a manifest JOIN.
+ *
+ * The manifest provides the `relative_path` for each result, making the
+ * search results fully path-aware even though shared_chunks are
+ * content-addressed and path-agnostic.
+ */
+export async function searchSharedChunksForWorktree(
+  db: IndexDatabase,
+  queryVector: Float32Array,
+  worktreeId: string,
+  options: SearchOptions & { model?: string }
+): Promise<SearchResult[]> {
+  if (!isPostgresDatabase(db)) return [];
+
+  const pool = requirePostgresPool(db);
+  const sc = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const wm = quoteIdentifier('lgrep_worktree_manifests');
+  const params: unknown[] = [vectorToSql(queryVector), worktreeId];
+  const clauses: string[] = [];
+
+  if (options.model) {
+    params.push(options.model);
+    clauses.push(`sc.model = $${params.length}`);
+  }
+
+  params.push(options.limit);
+
+  const extraWhere = clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : '';
+
+  const result = await pool.query<Record<string, unknown>>(
+    `SELECT
+       sc.content_hash,
+       sc.chunk_index,
+       sc.model,
+       sc.content,
+       sc.vector::text AS vector,
+       sc.language,
+       sc.line_start,
+       sc.line_end,
+       sc.file_type,
+       sc.created_at::text AS created_at,
+       wm.relative_path,
+       (sc.vector <=> $1::vector) AS _distance
+     FROM ${sc} sc
+     JOIN ${wm} wm
+       ON sc.content_hash = wm.content_hash
+     WHERE wm.worktree_id = $2${extraWhere}
+     ORDER BY sc.vector <=> $1::vector
+     LIMIT $${params.length}`,
+    params
+  );
+
+  return result.rows.map((row) => ({
+    id: '',
+    filePath: '',
+    relativePath: row['relative_path'] as string,
+    contentHash: row['content_hash'] as string,
+    chunkIndex: row['chunk_index'] as number,
+    content: row['content'] as string,
+    vector: parseVectorValue(row['vector']),
+    language: (row['language'] as string) || undefined,
+    lineStart: row['line_start'] != null ? (row['line_start'] as number) : undefined,
+    lineEnd: row['line_end'] != null ? (row['line_end'] as number) : undefined,
+    fileType: row['file_type'] as string,
+    createdAt: row['created_at'] as string,
+    _score: Number(row['_distance'] ?? 0),
+  }));
+}
+
+/**
  * Check which content hashes already exist in the shared chunk store.
  * Returns the subset of input hashes that are already stored.
  */
