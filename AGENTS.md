@@ -70,17 +70,15 @@ lgrep list
 
 | Command | Purpose |
 |---------|---------|
-| **Core** | |
+| `lgrep doctor` | Check health, config, and indexing status |
 | `lgrep index <path>` | Index a directory for semantic search |
 | `lgrep search <query>` | Semantic code search |
 | `lgrep context <task>` | Build context package for a task |
 | `lgrep intent <prompt>` | Natural language command routing |
 | `lgrep list` | List all indexes |
-| `lgrep watch <path>` | Auto-update index on file changes |
-| `lgrep stop <name>` | Stop a running watcher |
+| `lgrep watch <name>` | Auto-update index on file changes |
 | `lgrep delete <name>` | Delete an index |
-| `lgrep clean` | Remove failed/stale/zombie indexes |
-| **Code Intelligence** | |
+| `lgrep config` | Manage configuration |
 | `lgrep dead` | Find functions with zero callers |
 | `lgrep similar` | Find duplicated function bodies |
 | `lgrep cycles` | Detect circular dependencies |
@@ -90,21 +88,8 @@ lgrep list
 | `lgrep callers <symbol>` | Find all callers of a function |
 | `lgrep deps <file>` | Show file dependencies |
 | `lgrep impact <symbol>` | Analyze change impact |
-| **Analysis & Exploration** | |
-| `lgrep graph` | Visualize code dependencies in a web UI |
-| `lgrep analyze <path>` | Analyze code structure without indexing |
-| `lgrep symbols [query]` | Quick symbol lookup by name |
-| `lgrep explain <target>` | AI-powered explanation of a file or symbol |
-| `lgrep stats` | Show index statistics |
-| `lgrep logs` | View watcher daemon logs |
-| **Configuration & Setup** | |
-| `lgrep doctor` | Check health, config, and indexing status |
-| `lgrep config` | Manage configuration |
-| `lgrep setup` | Auto-install Ollama and download models |
-| `lgrep install` | Install Claude Code integration (skill + hook) |
-| `lgrep install-mcp` | Install lgrep as an MCP server |
-| `lgrep auth r2` | Configure R2/S3 remote storage credentials |
-| `lgrep daemon` | Manage query daemon (start/stop/list/query/logs) |
+| `lgrep clean` | Remove failed/stale/zombie indexes |
+| `lgrep stop <name>` | Stop a running watcher |
 
 ### Embedding Providers
 
@@ -162,7 +147,7 @@ lgrep config set summarizationModel "groq:llama-3.1-8b-instant"
 
 ### Configuration
 
-Config stored in platform-specific location (macOS: `~/Library/Application Support/lgrep/config.json`, Linux: `~/.local/share/lgrep/config.json`). Override with `LGREP_HOME` env var.
+Config stored in `~/.lgrep/config.json`:
 
 ```bash
 lgrep config list                    # Show all settings
