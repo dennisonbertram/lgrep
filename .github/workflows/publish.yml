@@ -48,5 +48,8 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Run cloud bootstrap smoke test
+        run: npm run test:cloud-smoke
+
       - name: Publish package
         run: npm publish
