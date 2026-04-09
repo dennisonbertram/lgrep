@@ -176,6 +176,10 @@ export function detectBestEmbeddingProvider(): string {
 export function createEmbeddingClient(
   options: EmbeddingClientOptions = {}
 ): EmbeddingClient {
+  if (process.env['LGREP_TEST_EMBEDDINGS'] === '1') {
+    return createTestEmbeddingClient(options.model);
+  }
+
   const modelString = options.model ?? DEFAULT_MODEL;
   const timeout = options.timeout ?? DEFAULT_TIMEOUT;
 
@@ -197,6 +201,40 @@ export function createEmbeddingClient(
     default:
       throw new Error(`Provider ${provider} not implemented`);
   }
+}
+
+function createTestEmbeddingClient(model?: string): EmbeddingClient {
+  const fullModelString =
+    model && model !== 'auto' ? model : 'test:test-embedding-4d';
+
+  return {
+    model: fullModelString,
+    provider: 'test',
+
+    async embed(input: string | string[]): Promise<EmbeddingResult> {
+      const values = Array.isArray(input) ? input : [input];
+
+      return {
+        embeddings: values.map(() => [0.1, 0.2, 0.3, 0.4]),
+        model: fullModelString,
+      };
+    },
+
+    async embedQuery(query: string): Promise<EmbeddingResult> {
+      return this.embed(query);
+    },
+
+    async healthCheck(): Promise<HealthCheckResult> {
+      return {
+        healthy: true,
+        modelAvailable: true,
+      };
+    },
+
+    async getModelDimensions(): Promise<number> {
+      return 4;
+    },
+  };
 }
 
 /**

@@ -26,14 +26,17 @@
   ],
   "scripts": {
     "build": "tsup && npm run build:viewer",
+    "build:test-binaries": "node scripts/ensure-test-binaries.mjs --force",
     "dev": "tsup --watch",
     "build:viewer": "vite build --config viewer/vite.config.ts",
     "dev:viewer": "vite --config viewer/vite.config.ts",
+    "pretest": "node scripts/ensure-test-binaries.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts",
     "type-check": "tsc --noEmit",
+    "release:check": "npm run type-check && npm run build && npm test && npm pack --dry-run",
     "prepublishOnly": "npm run type-check && npm run build && npm test"
   },
   "engines": {
@@ -66,6 +69,9 @@
   "homepage": "https://github.com/dennisonbertram/lgrep#readme",
   "bugs": {
     "url": "https://github.com/dennisonbertram/lgrep/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.56",

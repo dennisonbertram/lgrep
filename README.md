@@ -189,3 +189,5 @@ npm install --legacy-peer-deps
 npm run build
 npm test
 ```
+
+Maintainers: see [docs/guides/releasing.md](docs/guides/releasing.md) for npm release setup and the tag-based publish flow.

@@ -1,8 +1,28 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+
+vi.mock('../../core/embeddings.js', () => ({
+  createEmbeddingClient: vi.fn().mockReturnValue({
+    model: 'test-model',
+    embed: vi.fn().mockImplementation(async (input: string | string[]) => {
+      const texts = Array.isArray(input) ? input : [input];
+      return {
+        embeddings: texts.map(() => [0.1, 0.2, 0.3, 0.4]),
+        model: 'test-model',
+      };
+    }),
+    embedQuery: vi.fn().mockResolvedValue({
+      embeddings: [[0.1, 0.2, 0.3, 0.4]],
+      model: 'test-model',
+    }),
+    healthCheck: vi.fn().mockResolvedValue({ ok: true, model: 'test-model', dimensions: 4 }),
+    getModelDimensions: vi.fn().mockResolvedValue(4),
+  }),
+}));
+
 import { runIndexCommand } from './index.js';
 import {
   openDatabase,
@@ -35,6 +55,7 @@ describe('index command - metadata table integration', () => {
 
   afterEach(async () => {
     await rm(testDir, { recursive: true, force: true });
+    vi.clearAllMocks();
   });
 
   it('should create metadata table on initial index', { timeout: TEST_TIMEOUT }, async () => {
