@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import type { DatabaseSettings } from './database-config.js';
 import {
   POSTGRES_INDEXES_TABLE,
+  SHARED_CHUNKS_TABLE,
   getPostgresIndexTableName,
   quoteIdentifier,
   requirePostgresPool,
@@ -1478,4 +1479,273 @@ export function rerankerWithMMR(
   }
 
   return selected;
+}
+
+// ---------------------------------------------------------------------------
+// Shared content-addressable chunk store (Postgres only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensure the shared content-addressable tables exist.
+ * Must be called once before any shared read/write operations.
+ */
+export async function ensureSharedTables(
+  db: IndexDatabase,
+  vectorDimensions: number
+): Promise<void> {
+  if (!isPostgresDatabase(db)) {
+    return; // Shared tables are Postgres-only
+  }
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
+
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS ${table} (
+      content_hash TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      model TEXT NOT NULL,
+      content TEXT NOT NULL,
+      vector vector(${vectorDimensions}) NOT NULL,
+      language TEXT,
+      line_start INTEGER,
+      line_end INTEGER,
+      file_type TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (content_hash, chunk_index, model)
+    )`
+  );
+
+  const vectorIdx = quoteIdentifier(`${SHARED_CHUNKS_TABLE}_vector_idx`);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${vectorIdx}
+      ON ${table}
+      USING hnsw (vector vector_cosine_ops)`
+  );
+
+  const hashIdx = quoteIdentifier(`${SHARED_CHUNKS_TABLE}_hash_idx`);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${hashIdx}
+      ON ${table} (content_hash)`
+  );
+}
+
+/**
+ * Insert chunks into the shared content-addressable store.
+ * Uses INSERT ... ON CONFLICT DO NOTHING for concurrent-safe, idempotent writes.
+ */
+export async function addSharedChunks(
+  db: IndexDatabase,
+  model: string,
+  chunks: DocumentChunk[]
+): Promise<number> {
+  if (chunks.length === 0) return 0;
+  if (!isPostgresDatabase(db)) return 0;
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const values: string[] = [];
+  const params: unknown[] = [];
+
+  for (const chunk of chunks) {
+    const base = params.length;
+    params.push(
+      chunk.contentHash,
+      chunk.chunkIndex,
+      model,
+      chunk.content,
+      vectorToSql(chunk.vector),
+      chunk.language ?? null,
+      chunk.lineStart ?? null,
+      chunk.lineEnd ?? null,
+      chunk.fileType,
+      chunk.createdAt
+    );
+    values.push(
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}::vector, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`
+    );
+  }
+
+  await pool.query(
+    `INSERT INTO ${table} (
+      content_hash,
+      chunk_index,
+      model,
+      content,
+      vector,
+      language,
+      line_start,
+      line_end,
+      file_type,
+      created_at
+    ) VALUES ${values.join(', ')}
+    ON CONFLICT (content_hash, chunk_index, model) DO NOTHING`,
+    params
+  );
+
+  return chunks.length;
+}
+
+/**
+ * Retrieve shared chunks by content hash.
+ */
+export async function getSharedChunksByHash(
+  db: IndexDatabase,
+  contentHashes: string[],
+  model?: string
+): Promise<DocumentChunk[]> {
+  if (contentHashes.length === 0) return [];
+  if (!isPostgresDatabase(db)) return [];
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const params: unknown[] = [];
+
+  // Build the IN clause for content hashes
+  const hashPlaceholders = contentHashes.map((hash) => {
+    params.push(hash);
+    return `$${params.length}`;
+  });
+
+  let modelClause = '';
+  if (model) {
+    params.push(model);
+    modelClause = ` AND model = $${params.length}`;
+  }
+
+  const result = await pool.query<Record<string, unknown>>(
+    `SELECT
+       content_hash,
+       chunk_index,
+       model,
+       content,
+       vector::text AS vector,
+       language,
+       line_start,
+       line_end,
+       file_type,
+       created_at::text AS created_at
+     FROM ${table}
+     WHERE content_hash IN (${hashPlaceholders.join(', ')})${modelClause}
+     ORDER BY content_hash, chunk_index ASC`,
+    params
+  );
+
+  return result.rows.map((row) => ({
+    id: '', // Shared chunks don't have per-index IDs
+    filePath: '',
+    relativePath: '',
+    contentHash: row['content_hash'] as string,
+    chunkIndex: row['chunk_index'] as number,
+    content: row['content'] as string,
+    vector: parseVectorValue(row['vector']),
+    language: (row['language'] as string) || undefined,
+    lineStart: row['line_start'] != null ? (row['line_start'] as number) : undefined,
+    lineEnd: row['line_end'] != null ? (row['line_end'] as number) : undefined,
+    fileType: row['file_type'] as string,
+    createdAt: row['created_at'] as string,
+  }));
+}
+
+/**
+ * Vector similarity search across the shared chunk store,
+ * optionally filtered to a set of content hashes.
+ */
+export async function searchSharedChunks(
+  db: IndexDatabase,
+  queryVector: Float32Array,
+  options: SearchOptions & { contentHashes?: string[]; model?: string }
+): Promise<SearchResult[]> {
+  if (!isPostgresDatabase(db)) return [];
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const params: unknown[] = [vectorToSql(queryVector)];
+  const clauses: string[] = [];
+
+  if (options.model) {
+    params.push(options.model);
+    clauses.push(`model = $${params.length}`);
+  }
+
+  if (options.contentHashes && options.contentHashes.length > 0) {
+    const hashPlaceholders = options.contentHashes.map((hash) => {
+      params.push(hash);
+      return `$${params.length}`;
+    });
+    clauses.push(`content_hash IN (${hashPlaceholders.join(', ')})`);
+  }
+
+  params.push(options.limit);
+
+  const whereClause = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+
+  const result = await pool.query<Record<string, unknown>>(
+    `SELECT
+       content_hash,
+       chunk_index,
+       model,
+       content,
+       vector::text AS vector,
+       language,
+       line_start,
+       line_end,
+       file_type,
+       created_at::text AS created_at,
+       (vector <=> $1::vector) AS _distance
+     FROM ${table}${whereClause}
+     ORDER BY vector <=> $1::vector
+     LIMIT $${params.length}`,
+    params
+  );
+
+  return result.rows.map((row) => ({
+    id: '',
+    filePath: '',
+    relativePath: '',
+    contentHash: row['content_hash'] as string,
+    chunkIndex: row['chunk_index'] as number,
+    content: row['content'] as string,
+    vector: parseVectorValue(row['vector']),
+    language: (row['language'] as string) || undefined,
+    lineStart: row['line_start'] != null ? (row['line_start'] as number) : undefined,
+    lineEnd: row['line_end'] != null ? (row['line_end'] as number) : undefined,
+    fileType: row['file_type'] as string,
+    createdAt: row['created_at'] as string,
+    _score: Number(row['_distance'] ?? 0),
+  }));
+}
+
+/**
+ * Check which content hashes already exist in the shared chunk store.
+ * Returns the subset of input hashes that are already stored.
+ */
+export async function contentHashesExist(
+  db: IndexDatabase,
+  contentHashes: string[],
+  model: string
+): Promise<Set<string>> {
+  if (contentHashes.length === 0) return new Set();
+  if (!isPostgresDatabase(db)) return new Set();
+
+  const pool = requirePostgresPool(db);
+  const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
+  const params: unknown[] = [];
+
+  const hashPlaceholders = contentHashes.map((hash) => {
+    params.push(hash);
+    return `$${params.length}`;
+  });
+
+  params.push(model);
+
+  const result = await pool.query<{ content_hash: string }>(
+    `SELECT DISTINCT content_hash
+       FROM ${table}
+      WHERE content_hash IN (${hashPlaceholders.join(', ')})
+        AND model = $${params.length}`,
+    params
+  );
+
+  return new Set(result.rows.map((row) => row.content_hash));
 }
