@@ -1,49 +1,23 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { getProfileHome, isExplicitLgrepHome } from './profiles.js';
 
 /**
  * Get the lgrep home directory based on platform conventions.
  *
  * Priority:
  * 1. LGREP_HOME environment variable (override)
- * 2. Platform-specific:
- *    - Linux: $XDG_DATA_HOME/lgrep or ~/.local/share/lgrep
- *    - macOS: ~/Library/Application Support/lgrep
- *    - Windows: %APPDATA%/lgrep
+ * 2. Active profile home under the platform default lgrep directory
  */
 export function getLgrepHome(): string {
-  // Allow override via environment variable
   const envHome = process.env['LGREP_HOME'];
   if (envHome) {
     return envHome;
   }
 
-  const platform = process.platform;
-  const home = homedir();
-
-  switch (platform) {
-    case 'darwin':
-      // macOS: ~/Library/Application Support/lgrep
-      return join(home, 'Library', 'Application Support', 'lgrep');
-
-    case 'win32':
-      // Windows: %APPDATA%/lgrep
-      const appData = process.env['APPDATA'];
-      if (appData) {
-        return join(appData, 'lgrep');
-      }
-      // Fallback for Windows if APPDATA not set
-      return join(home, 'AppData', 'Roaming', 'lgrep');
-
-    default:
-      // Linux and others: XDG_DATA_HOME or ~/.local/share
-      const xdgDataHome = process.env['XDG_DATA_HOME'];
-      if (xdgDataHome) {
-        return join(xdgDataHome, 'lgrep');
-      }
-      return join(home, '.local', 'share', 'lgrep');
-  }
+  return getProfileHome();
 }
+
+export { isExplicitLgrepHome };
 
 /**
  * Get the path to the database directory.

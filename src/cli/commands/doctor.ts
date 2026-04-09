@@ -1,23 +1,22 @@
-import { existsSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, dirname, resolve, join } from 'node:path';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getIndex, listIndexes } from '../../storage/lance.js';
-import {
-  openConfiguredDatabase,
-  getConfiguredDatabaseLocationSync,
-  resolveDatabaseSettingsSync,
-} from '../../storage/database-config.js';
-import { getLgrepHome, getConfigPath } from '../utils/paths.js';
+import { openConfiguredDatabase } from '../../storage/database-config.js';
+import { getConfigPath, getLgrepHome } from '../utils/paths.js';
 import { loadConfig } from '../../storage/config.js';
 import { DaemonManager } from '../../daemon/manager.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
+import {
+  DEFAULT_PROFILE_NAME,
+  getActiveProfileName,
+  isExplicitLgrepHome,
+} from '../utils/profiles.js';
 
 const execAsync = promisify(exec);
+const LGREP_SECTION_MARKER = '<!-- LGREP START -->';
 
-/**
- * Check result for a single item.
- */
 export interface CheckResult {
   name: string;
   status: 'ok' | 'warn' | 'error';
@@ -25,9 +24,6 @@ export interface CheckResult {
   fix?: string;
 }
 
-/**
- * Overall doctor result.
- */
 export interface DoctorResult {
   success: boolean;
   checks: CheckResult[];
@@ -38,17 +34,70 @@ export interface DoctorResult {
   };
 }
 
-/**
- * Options for doctor command.
- */
 export interface DoctorOptions {
   json?: boolean;
   path?: string;
 }
 
-/**
- * Check if Ollama is installed and running.
- */
+interface ClaudeSettings {
+  hooks?: {
+    SessionStart?: Array<{
+      matcher?: string;
+      hooks?: Array<{ command?: string }>;
+    }>;
+  };
+  mcpServers?: Record<string, unknown>;
+}
+
+function readClaudeSettings(home: string): ClaudeSettings | null {
+  try {
+    const settingsPath = join(home, '.claude', 'settings.json');
+    if (!existsSync(settingsPath)) {
+      return null;
+    }
+    return JSON.parse(readFileSync(settingsPath, 'utf-8')) as ClaudeSettings;
+  } catch {
+    return null;
+  }
+}
+
+function findNearestFile(startPath: string, fileName: string): string | null {
+  let current = resolve(startPath);
+  while (true) {
+    const candidate = join(current, fileName);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+
+    const parent = dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
+async function checkProfile(): Promise<CheckResult> {
+  if (isExplicitLgrepHome()) {
+    return {
+      name: 'Active profile',
+      status: 'warn',
+      message: `LGREP_HOME override in use (${getLgrepHome()})`,
+      fix: 'Unset LGREP_HOME to use named profiles',
+    };
+  }
+
+  const profile = getActiveProfileName();
+  const profileHome = getLgrepHome();
+  return {
+    name: 'Active profile',
+    status: 'ok',
+    message: profile === DEFAULT_PROFILE_NAME
+      ? `default (${profileHome})`
+      : `${profile} (${profileHome})`,
+  };
+}
+
 async function checkOllama(): Promise<CheckResult> {
   try {
     await execAsync('which ollama');
@@ -56,8 +105,8 @@ async function checkOllama(): Promise<CheckResult> {
     return {
       name: 'Ollama installed',
       status: 'warn',
-      message: 'Ollama not installed (optional if using cloud embeddings)',
-      fix: 'Run: lgrep setup',
+      message: 'Ollama not installed (optional if using external embeddings)',
+      fix: 'Run: lgrep init',
     };
   }
 
@@ -74,7 +123,7 @@ async function checkOllama(): Promise<CheckResult> {
       };
     }
   } catch {
-    // Not running
+    // Not running.
   }
 
   return {
@@ -85,20 +134,15 @@ async function checkOllama(): Promise<CheckResult> {
   };
 }
 
-/**
- * Check embedding provider configuration.
- */
 async function checkEmbeddingProvider(): Promise<CheckResult> {
   const config = await loadConfig();
   const model = config.model || 'auto';
 
-  // Check for API keys
   const hasOpenAI = !!process.env['OPENAI_API_KEY'];
   const hasCohere = !!process.env['COHERE_API_KEY'];
   const hasVoyage = !!process.env['VOYAGE_API_KEY'];
   const hasCloudProvider = hasOpenAI || hasCohere || hasVoyage;
 
-  // Check for Ollama
   let ollamaRunning = false;
   try {
     const response = await fetch('http://localhost:11434/api/tags', {
@@ -107,7 +151,7 @@ async function checkEmbeddingProvider(): Promise<CheckResult> {
     });
     ollamaRunning = response.ok;
   } catch {
-    // Not running
+    // Ignore.
   }
 
   if (model === 'auto') {
@@ -118,29 +162,29 @@ async function checkEmbeddingProvider(): Promise<CheckResult> {
         status: 'ok',
         message: `Auto-detect will use ${provider} (API key found)`,
       };
-    } else if (ollamaRunning) {
+    }
+    if (ollamaRunning) {
       return {
         name: 'Embedding provider',
         status: 'ok',
         message: 'Auto-detect will use Ollama (local)',
       };
-    } else {
-      return {
-        name: 'Embedding provider',
-        status: 'error',
-        message: 'No embedding provider available',
-        fix: 'Set OPENAI_API_KEY or run: ollama serve',
-      };
     }
+
+    return {
+      name: 'Embedding provider',
+      status: 'error',
+      message: 'No embedding provider available',
+      fix: 'Run: lgrep init',
+    };
   }
 
-  // Explicit model configured
   if (model.startsWith('openai:') && !hasOpenAI) {
     return {
       name: 'Embedding provider',
       status: 'error',
       message: `Model "${model}" requires OPENAI_API_KEY`,
-      fix: 'export OPENAI_API_KEY="sk-..."',
+      fix: 'Export OPENAI_API_KEY or run: lgrep init',
     };
   }
   if (model.startsWith('cohere:') && !hasCohere) {
@@ -148,7 +192,7 @@ async function checkEmbeddingProvider(): Promise<CheckResult> {
       name: 'Embedding provider',
       status: 'error',
       message: `Model "${model}" requires COHERE_API_KEY`,
-      fix: 'export COHERE_API_KEY="..."',
+      fix: 'Export COHERE_API_KEY or run: lgrep init',
     };
   }
   if (model.startsWith('voyage:') && !hasVoyage) {
@@ -156,7 +200,7 @@ async function checkEmbeddingProvider(): Promise<CheckResult> {
       name: 'Embedding provider',
       status: 'error',
       message: `Model "${model}" requires VOYAGE_API_KEY`,
-      fix: 'export VOYAGE_API_KEY="..."',
+      fix: 'Export VOYAGE_API_KEY or run: lgrep init',
     };
   }
 
@@ -167,9 +211,6 @@ async function checkEmbeddingProvider(): Promise<CheckResult> {
   };
 }
 
-/**
- * Check if lgrep home directory exists.
- */
 function checkLgrepHome(): CheckResult {
   const home = getLgrepHome();
   if (existsSync(home)) {
@@ -183,13 +224,10 @@ function checkLgrepHome(): CheckResult {
     name: 'lgrep home',
     status: 'warn',
     message: `Directory doesn't exist yet: ${home}`,
-    fix: 'Run: lgrep index <path> --name <name>',
+    fix: 'Run: lgrep init',
   };
 }
 
-/**
- * Check if config file exists.
- */
 function checkConfig(): CheckResult {
   const configPath = getConfigPath();
   if (existsSync(configPath)) {
@@ -203,56 +241,129 @@ function checkConfig(): CheckResult {
     name: 'Config file',
     status: 'warn',
     message: 'No config file (using defaults)',
-    fix: 'Run: lgrep config set model auto',
+    fix: 'Run: lgrep init',
   };
 }
 
-/**
- * Check indexes.
- */
-async function checkIndexes(): Promise<CheckResult> {
-  const settings = resolveDatabaseSettingsSync();
-  const dbPath = getConfiguredDatabaseLocationSync();
-  if (settings.mode === 'local' && !existsSync(dbPath)) {
+async function checkStorageBackend(): Promise<CheckResult> {
+  const config = await loadConfig();
+  if (config.storageMode === 'local') {
     return {
-      name: 'Indexes',
-      status: 'warn',
-      message: 'No indexes created yet',
-      fix: 'Run: lgrep index . --name <name>',
+      name: 'Storage backend',
+      status: 'ok',
+      message: 'Local index + local cache',
+    };
+  }
+
+  if (config.storageMode === 'postgres') {
+    return {
+      name: 'Storage backend',
+      status: 'ok',
+      message: `Cloud Postgres using ${config.storageDatabaseUrlEnv}`,
+    };
+  }
+
+  return {
+    name: 'Storage backend',
+    status: 'warn',
+    message: `Advanced S3/R2 mode (${config.storageUri || 'unconfigured'})`,
+    fix: 'Run: lgrep init --mode cloud to switch to the default Postgres cloud path',
+  };
+}
+
+async function checkCloudDatabase(): Promise<CheckResult | null> {
+  const config = await loadConfig();
+  if (config.storageMode !== 'postgres') {
+    return null;
+  }
+
+  const envName = config.storageDatabaseUrlEnv.trim() || 'LGREP_DATABASE_URL';
+  const databaseUrl = process.env[envName];
+  if (!databaseUrl) {
+    return {
+      name: 'Cloud database',
+      status: 'error',
+      message: `Missing ${envName}`,
+      fix: `Export ${envName} or rerun: lgrep init --mode cloud`,
     };
   }
 
   try {
     const db = await openConfiguredDatabase();
-    const indexes = await listIndexes(db);
     await db.close();
 
-    if (indexes.length === 0) {
-      return {
-        name: 'Indexes',
-        status: 'warn',
-        message: 'No indexes found',
-        fix: 'Run: lgrep index . --name <name>',
-      };
-    }
-
     return {
-      name: 'Indexes',
+      name: 'Cloud database',
       status: 'ok',
-      message: `${indexes.length} index(es): ${indexes.map(i => i.name).join(', ')}`,
+      message: `Connected via ${envName}; pgvector and schema are ready`,
     };
   } catch (error) {
     return {
-      name: 'Indexes',
+      name: 'Cloud database',
       status: 'error',
-      message: `Failed to read indexes: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Connection failed: ${error instanceof Error ? error.message : String(error)}`,
+      fix: `Verify ${envName} and database connectivity, then rerun lgrep doctor`,
     };
   }
 }
 
-/**
- * Check if current directory is indexed.
- */
+async function checkRemoteCache(): Promise<CheckResult | null> {
+  const config = await loadConfig();
+  if (config.cacheBackend !== 'postgres') {
+    return null;
+  }
+
+  const envName = config.cacheDatabaseUrlEnv.trim() || 'LGREP_CACHE_DATABASE_URL';
+  if (!process.env[envName]) {
+    return {
+      name: 'Remote cache',
+      status: 'error',
+      message: `Missing ${envName}`,
+      fix: `Export ${envName} or switch cacheBackend to local`,
+    };
+  }
+
+  return {
+    name: 'Remote cache',
+    status: 'ok',
+    message: `Remote cache configured via ${envName}`,
+  };
+}
+
+async function checkIndexes(): Promise<CheckResult> {
+  const config = await loadConfig();
+
+  try {
+    const db = await openConfiguredDatabase();
+    try {
+      const indexes = await listIndexes(db);
+      if (indexes.length === 0) {
+        return {
+          name: 'Indexes',
+          status: 'warn',
+          message: config.storageMode === 'local' ? 'No indexes created yet' : 'No indexes found',
+          fix: 'Run: lgrep index . --name <name>',
+        };
+      }
+
+      return {
+        name: 'Indexes',
+        status: 'ok',
+        message: `${indexes.length} index(es): ${indexes.map((index) => index.name).join(', ')}`,
+      };
+    } finally {
+      await db.close();
+    }
+  } catch (error) {
+    return {
+      name: 'Indexes',
+      status: config.storageMode === 'local' ? 'warn' : 'error',
+      message: `Unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      fix: config.storageMode === 'local' ? 'Run: lgrep init' : 'Fix the cloud database configuration, then rerun lgrep doctor',
+    };
+  }
+}
+
 async function checkCurrentDirectory(targetPath: string): Promise<CheckResult> {
   const absolutePath = resolve(targetPath);
   const dirName = basename(absolutePath);
@@ -267,47 +378,57 @@ async function checkCurrentDirectory(targetPath: string): Promise<CheckResult> {
       };
     }
   } catch {
-    // Detection failed
+    // Detection failed.
   }
 
-  // Try to find by name
   try {
     const db = await openConfiguredDatabase();
-    const index = await getIndex(db, dirName);
-    await db.close();
-
-    if (index) {
-      return {
-        name: 'Current directory',
-        status: 'ok',
-        message: `Indexed as "${dirName}"`,
-      };
+    try {
+      const index = await getIndex(db, dirName);
+      if (index) {
+        return {
+          name: 'Current directory',
+          status: 'ok',
+          message: `Indexed as "${dirName}"`,
+        };
+      }
+    } finally {
+      await db.close();
     }
-  } catch {
-    // Ignore
+  } catch (error) {
+    return {
+      name: 'Current directory',
+      status: 'warn',
+      message: `Index detection unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      fix: 'Run: lgrep doctor after fixing storage configuration',
+    };
   }
 
   return {
     name: 'Current directory',
     status: 'warn',
     message: `Not indexed: ${absolutePath}`,
-    fix: `Run: lgrep watch "${absolutePath}"`,
+    fix: `Run: lgrep index "${absolutePath}" --name <name>`,
   };
 }
 
-/**
- * Check if watcher is running for current directory.
- */
 async function checkWatcher(targetPath: string): Promise<CheckResult> {
+  const config = await loadConfig();
+  if (config.storageMode !== 'local') {
+    return {
+      name: 'Watcher daemon',
+      status: 'ok',
+      message: 'Cloud mode does not require local watchers',
+    };
+  }
+
   const absolutePath = resolve(targetPath);
   const dirName = basename(absolutePath);
-
   const manager = new DaemonManager();
   const daemons = await manager.list();
 
-  // Check if any daemon is watching this path
   const matchingDaemon = daemons.find(
-    d => d.rootPath === absolutePath || d.indexName === dirName
+    (daemon) => daemon.rootPath === absolutePath || daemon.indexName === dirName
   );
 
   if (matchingDaemon) {
@@ -318,7 +439,6 @@ async function checkWatcher(targetPath: string): Promise<CheckResult> {
     };
   }
 
-  // Check if there are any daemons at all
   if (daemons.length === 0) {
     return {
       name: 'Watcher daemon',
@@ -336,22 +456,22 @@ async function checkWatcher(targetPath: string): Promise<CheckResult> {
   };
 }
 
-/**
- * Check Claude integration.
- */
 function checkClaudeIntegration(): CheckResult {
   const home = process.env['HOME'] || '';
-  const skillPath = `${home}/.claude/skills/lgrep-search/SKILL.md`;
-  const claudeMdPath = `${home}/.claude/CLAUDE.md`;
-
+  const skillPath = join(home, '.claude', 'skills', 'lgrep-search', 'SKILL.md');
+  const settings = readClaudeSettings(home);
   const hasSkill = existsSync(skillPath);
-  const hasClaudeMd = existsSync(claudeMdPath);
+  const hasHook = Boolean(
+    settings?.hooks?.SessionStart?.some((entry) =>
+      entry.hooks?.some((hook) => hook.command?.includes('lgrep-check.sh'))
+    )
+  );
 
-  if (hasSkill && hasClaudeMd) {
+  if (hasSkill && hasHook) {
     return {
       name: 'Claude integration',
       status: 'ok',
-      message: 'Skill and CLAUDE.md installed',
+      message: 'Skill and SessionStart hook installed',
     };
   }
 
@@ -359,8 +479,8 @@ function checkClaudeIntegration(): CheckResult {
     return {
       name: 'Claude integration',
       status: 'warn',
-      message: 'Skill installed, but ~/.claude/CLAUDE.md missing',
-      fix: 'Run: lgrep install -y',
+      message: 'Skill installed, but SessionStart hook missing',
+      fix: 'Run: lgrep install --target claude',
     };
   }
 
@@ -368,82 +488,131 @@ function checkClaudeIntegration(): CheckResult {
     name: 'Claude integration',
     status: 'warn',
     message: 'Not installed',
-    fix: 'Run: lgrep install',
+    fix: 'Run: lgrep install --target claude',
   };
 }
 
-/**
- * Check for zombie indexes (indexes stuck in "building" state).
- * These occur when indexing processes crash or are killed.
- */
-async function checkZombieIndexes(): Promise<CheckResult> {
-  const settings = resolveDatabaseSettingsSync();
-  const dbPath = getConfiguredDatabaseLocationSync();
-  if (settings.mode === 'local' && !existsSync(dbPath)) {
+function checkCodexIntegration(targetPath: string): CheckResult {
+  const agentsPath = findNearestFile(targetPath, 'AGENTS.md');
+  if (!agentsPath) {
     return {
-      name: 'Zombie indexes',
-      status: 'ok',
-      message: 'No indexes to check',
+      name: 'Codex integration',
+      status: 'warn',
+      message: 'No AGENTS.md found for this project',
+      fix: 'Run: lgrep install --target codex',
     };
   }
 
   try {
-    const db = await openConfiguredDatabase();
-    const indexes = await listIndexes(db);
-    await db.close();
-
-    // Find indexes stuck in "building" state with 0 chunks
-    const zombieIndexes = indexes.filter(
-      index => index.metadata.status === 'building' && index.metadata.chunkCount === 0
-    );
-
-    if (zombieIndexes.length === 0) {
+    const content = readFileSync(agentsPath, 'utf-8');
+    if (content.includes(LGREP_SECTION_MARKER) || content.includes('## lgrep') || content.includes('# lgrep')) {
       return {
-        name: 'Zombie indexes',
+        name: 'Codex integration',
         status: 'ok',
-        message: 'No zombie indexes detected',
+        message: `Project guidance installed at ${agentsPath}`,
       };
     }
+  } catch {
+    // Ignore read failures and fall through.
+  }
 
-    const zombieNames = zombieIndexes.map(i => i.name).join(', ');
+  return {
+    name: 'Codex integration',
+    status: 'warn',
+    message: `AGENTS.md found at ${agentsPath}, but lgrep guidance is missing`,
+    fix: 'Run: lgrep install --target codex',
+  };
+}
+
+function checkMcpIntegration(): CheckResult {
+  const home = process.env['HOME'] || '';
+  const settings = readClaudeSettings(home);
+  if (settings?.mcpServers && 'lgrep' in settings.mcpServers) {
     return {
-      name: 'Zombie indexes',
-      status: 'warn',
-      message: `${zombieIndexes.length} index(es) stuck in building state: ${zombieNames}`,
-      fix: 'Run: lgrep clean',
+      name: 'MCP integration',
+      status: 'ok',
+      message: 'lgrep MCP server is configured',
     };
+  }
+
+  return {
+    name: 'MCP integration',
+    status: 'warn',
+    message: 'Not configured',
+    fix: 'Run: lgrep install --target mcp',
+  };
+}
+
+async function checkZombieIndexes(): Promise<CheckResult> {
+  try {
+    const db = await openConfiguredDatabase();
+    try {
+      const indexes = await listIndexes(db);
+      const zombieIndexes = indexes.filter(
+        (index) => index.metadata.status === 'building' && index.metadata.chunkCount === 0
+      );
+
+      if (zombieIndexes.length === 0) {
+        return {
+          name: 'Zombie indexes',
+          status: 'ok',
+          message: 'No zombie indexes detected',
+        };
+      }
+
+      const zombieNames = zombieIndexes.map((index) => index.name).join(', ');
+      return {
+        name: 'Zombie indexes',
+        status: 'warn',
+        message: `${zombieIndexes.length} index(es) stuck in building state: ${zombieNames}`,
+        fix: 'Run: lgrep clean',
+      };
+    } finally {
+      await db.close();
+    }
   } catch (error) {
     return {
       name: 'Zombie indexes',
-      status: 'error',
-      message: `Failed to check for zombie indexes: ${error instanceof Error ? error.message : String(error)}`,
+      status: 'warn',
+      message: `Unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      fix: 'Fix storage configuration, then rerun lgrep doctor',
     };
   }
 }
 
-/**
- * Run the doctor command.
- */
 export async function runDoctorCommand(options: DoctorOptions = {}): Promise<DoctorResult> {
   const targetPath = options.path || process.cwd();
   const checks: CheckResult[] = [];
 
-  // Run all checks
+  checks.push(await checkProfile());
   checks.push(checkLgrepHome());
   checks.push(checkConfig());
+  checks.push(await checkStorageBackend());
   checks.push(await checkOllama());
   checks.push(await checkEmbeddingProvider());
+
+  const cloudDatabaseCheck = await checkCloudDatabase();
+  if (cloudDatabaseCheck) {
+    checks.push(cloudDatabaseCheck);
+  }
+
+  const remoteCacheCheck = await checkRemoteCache();
+  if (remoteCacheCheck) {
+    checks.push(remoteCacheCheck);
+  }
+
   checks.push(await checkIndexes());
   checks.push(await checkZombieIndexes());
   checks.push(await checkCurrentDirectory(targetPath));
   checks.push(await checkWatcher(targetPath));
   checks.push(checkClaudeIntegration());
+  checks.push(checkCodexIntegration(targetPath));
+  checks.push(checkMcpIntegration());
 
-  // Calculate summary
   const summary = {
-    ok: checks.filter(c => c.status === 'ok').length,
-    warn: checks.filter(c => c.status === 'warn').length,
-    error: checks.filter(c => c.status === 'error').length,
+    ok: checks.filter((check) => check.status === 'ok').length,
+    warn: checks.filter((check) => check.status === 'warn').length,
+    error: checks.filter((check) => check.status === 'error').length,
   };
 
   return {

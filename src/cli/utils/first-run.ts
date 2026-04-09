@@ -74,9 +74,9 @@ export async function checkFirstRun(): Promise<boolean> {
 
     console.log('│                                                             │');
     console.log('│  Quick setup:                                               │');
-    console.log('│    npx lgrep setup                                          │');
+    console.log('│    npx lgrep init                                           │');
     console.log('│                                                             │');
-    console.log('│  This will install Ollama and download required models.     │');
+    console.log('│  This guides you through Local or Cloud setup.              │');
     console.log('└─────────────────────────────────────────────────────────────┘\n');
 
     // Mark as shown so we don't spam the user

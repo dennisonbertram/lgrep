@@ -1,7 +1,7 @@
 import * as lancedb from '@lancedb/lancedb';
 import { mkdir, rm, readdir, readFile, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import type { DatabaseSettings } from './database-config.js';
 import {
   POSTGRES_INDEXES_TABLE,
@@ -85,6 +85,17 @@ export interface SharedChunkConfig {
   chunkOverlap: number;
 }
 
+function normalizeVectorDimensions(vectorDimensions: number): number {
+  if (!Number.isInteger(vectorDimensions) || vectorDimensions <= 0) {
+    throw new Error(`Invalid vector dimensions: ${vectorDimensions}`);
+  }
+  return vectorDimensions;
+}
+
+function getSharedChunkVectorIndexName(vectorDimensions: number): string {
+  return `${SHARED_CHUNKS_TABLE}_vector_${normalizeVectorDimensions(vectorDimensions)}_idx`;
+}
+
 /**
  * Database connection wrapper.
  */
@@ -100,6 +111,8 @@ export interface IndexDatabase {
 const CURRENT_SCHEMA_VERSION = 1;
 const INDEX_METADATA_TABLE = '__indexes';
 const TABLE_NAME = 'chunks';
+const POSTGRES_BOOTSTRAP_LOCK_NAMESPACE = 27647;
+const POSTGRES_BOOTSTRAP_LOCK_KEY = 0;
 const FILE_METADATA_TABLE_SUFFIX = 'files';
 const INDEX_TABLE_SUFFIXES = [
   TABLE_NAME,
@@ -248,29 +261,70 @@ function getKnownIndexTableNames(indexName: string, mode: IndexDatabase['mode'] 
 }
 
 async function ensurePostgresBaseTables(pool: Pool): Promise<void> {
+  const client = await pool.connect();
+  let lockAcquired = false;
+  let failure: Error | null = null;
+
   try {
-    await pool.query('CREATE EXTENSION IF NOT EXISTS vector');
+    await client.query(
+      'SELECT pg_advisory_lock($1, $2)',
+      [POSTGRES_BOOTSTRAP_LOCK_NAMESPACE, POSTGRES_BOOTSTRAP_LOCK_KEY],
+    );
+    lockAcquired = true;
+
+    await ensurePgvectorExtension(client);
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS ${quoteIdentifier(POSTGRES_INDEXES_TABLE)} (
+        index_name TEXT PRIMARY KEY,
+        root_path TEXT NOT NULL,
+        status TEXT NOT NULL,
+        model TEXT NOT NULL,
+        model_dimensions INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        document_count INTEGER NOT NULL,
+        chunk_count INTEGER NOT NULL,
+        generation_id INTEGER NOT NULL,
+        schema_version INTEGER NOT NULL
+      )`
+    );
+  } catch (err) {
+    failure = err as Error;
+  } finally {
+    try {
+      if (lockAcquired) {
+        await client.query(
+          'SELECT pg_advisory_unlock($1, $2)',
+          [POSTGRES_BOOTSTRAP_LOCK_NAMESPACE, POSTGRES_BOOTSTRAP_LOCK_KEY],
+        );
+      }
+    } catch (err) {
+      const unlockError = err as Error;
+      if (failure) {
+        failure = new Error(
+          `${failure.message}; additionally failed to release Postgres bootstrap lock: ${unlockError.message}`,
+        );
+      } else {
+        failure = unlockError;
+      }
+    } finally {
+      client.release();
+    }
+  }
+
+  if (failure) {
+    throw failure;
+  }
+}
+
+async function ensurePgvectorExtension(client: PoolClient): Promise<void> {
+  try {
+    await client.query('CREATE EXTENSION IF NOT EXISTS vector');
   } catch (error) {
     throw new Error(
       `Failed to enable the pgvector extension. Ensure the "vector" extension is available for this database and the current user can enable it. Original error: ${error}`
     );
   }
-
-  await pool.query(
-    `CREATE TABLE IF NOT EXISTS ${quoteIdentifier(POSTGRES_INDEXES_TABLE)} (
-      index_name TEXT PRIMARY KEY,
-      root_path TEXT NOT NULL,
-      status TEXT NOT NULL,
-      model TEXT NOT NULL,
-      model_dimensions INTEGER NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL,
-      document_count INTEGER NOT NULL,
-      chunk_count INTEGER NOT NULL,
-      generation_id INTEGER NOT NULL,
-      schema_version INTEGER NOT NULL
-    )`
-  );
 }
 
 async function ensurePostgresIndexTables(
@@ -1502,6 +1556,7 @@ export async function ensureSharedTables(
     return; // Shared tables are Postgres-only
   }
 
+  const normalizedDimensions = normalizeVectorDimensions(vectorDimensions);
   const pool = requirePostgresPool(db);
   const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
 
@@ -1510,19 +1565,33 @@ export async function ensureSharedTables(
       content_hash TEXT NOT NULL,
       chunk_index INTEGER NOT NULL,
       model TEXT NOT NULL,
+      model_dims INTEGER NOT NULL,
       chunk_max_tokens INTEGER NOT NULL DEFAULT 500,
       chunk_overlap INTEGER NOT NULL DEFAULT 50,
       content TEXT NOT NULL,
-      vector vector(${vectorDimensions}) NOT NULL,
+      vector vector NOT NULL,
       language TEXT,
       line_start INTEGER,
       line_end INTEGER,
       file_type TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL,
-      PRIMARY KEY (content_hash, chunk_index, model, chunk_max_tokens, chunk_overlap)
+      PRIMARY KEY (content_hash, chunk_index, model, model_dims, chunk_max_tokens, chunk_overlap)
     )`
   );
 
+  await pool.query(
+    `ALTER TABLE ${table}
+      ADD COLUMN IF NOT EXISTS model_dims INTEGER`
+  );
+  await pool.query(
+    `UPDATE ${table}
+      SET model_dims = vector_dims(vector)
+      WHERE model_dims IS NULL OR model_dims = 0`
+  );
+  await pool.query(
+    `ALTER TABLE ${table}
+      ALTER COLUMN model_dims SET NOT NULL`
+  );
   await pool.query(
     `ALTER TABLE ${table}
       ADD COLUMN IF NOT EXISTS chunk_max_tokens INTEGER NOT NULL DEFAULT 500`
@@ -1534,9 +1603,7 @@ export async function ensureSharedTables(
 
   const vectorIdx = quoteIdentifier(`${SHARED_CHUNKS_TABLE}_vector_idx`);
   await pool.query(
-    `CREATE INDEX IF NOT EXISTS ${vectorIdx}
-      ON ${table}
-      USING hnsw (vector vector_cosine_ops)`
+    `DROP INDEX IF EXISTS ${vectorIdx}`
   );
 
   const hashIdx = quoteIdentifier(`${SHARED_CHUNKS_TABLE}_hash_idx`);
@@ -1548,7 +1615,15 @@ export async function ensureSharedTables(
   const lookupIdx = quoteIdentifier(`${SHARED_CHUNKS_TABLE}_lookup_idx`);
   await pool.query(
     `CREATE INDEX IF NOT EXISTS ${lookupIdx}
-      ON ${table} (content_hash, model, chunk_max_tokens, chunk_overlap)`
+      ON ${table} (content_hash, model, model_dims, chunk_max_tokens, chunk_overlap)`
+  );
+
+  const vectorIndexName = quoteIdentifier(getSharedChunkVectorIndexName(normalizedDimensions));
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${vectorIndexName}
+      ON ${table}
+      USING hnsw ((vector::vector(${normalizedDimensions})) vector_cosine_ops)
+      WHERE model_dims = ${normalizedDimensions}`
   );
 }
 
@@ -1559,12 +1634,14 @@ export async function ensureSharedTables(
 export async function addSharedChunks(
   db: IndexDatabase,
   model: string,
+  modelDimensions: number,
   chunks: DocumentChunk[],
   chunkConfig: SharedChunkConfig
 ): Promise<number> {
   if (chunks.length === 0) return 0;
   if (!isPostgresDatabase(db)) return 0;
 
+  const normalizedDimensions = normalizeVectorDimensions(modelDimensions);
   const pool = requirePostgresPool(db);
   const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
   const values: string[] = [];
@@ -1576,6 +1653,7 @@ export async function addSharedChunks(
       chunk.contentHash,
       chunk.chunkIndex,
       model,
+      normalizedDimensions,
       chunkConfig.chunkMaxTokens,
       chunkConfig.chunkOverlap,
       chunk.content,
@@ -1587,7 +1665,7 @@ export async function addSharedChunks(
       chunk.createdAt
     );
     values.push(
-      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}::vector, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12})`
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}::vector, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12}, $${base + 13})`
     );
   }
 
@@ -1596,6 +1674,7 @@ export async function addSharedChunks(
       content_hash,
       chunk_index,
       model,
+      model_dims,
       chunk_max_tokens,
       chunk_overlap,
       content,
@@ -1606,7 +1685,7 @@ export async function addSharedChunks(
       file_type,
       created_at
     ) VALUES ${values.join(', ')}
-    ON CONFLICT (content_hash, chunk_index, model, chunk_max_tokens, chunk_overlap) DO NOTHING`,
+    ON CONFLICT (content_hash, chunk_index, model, model_dims, chunk_max_tokens, chunk_overlap) DO NOTHING`,
     params
   );
 
@@ -1620,6 +1699,7 @@ export async function getSharedChunksByHash(
   db: IndexDatabase,
   contentHashes: string[],
   model?: string,
+  modelDimensions?: number,
   chunkConfig?: SharedChunkConfig
 ): Promise<DocumentChunk[]> {
   if (contentHashes.length === 0) return [];
@@ -1639,6 +1719,12 @@ export async function getSharedChunksByHash(
   if (model) {
     params.push(model);
     modelClause = ` AND model = $${params.length}`;
+  }
+
+  let modelDimensionsClause = '';
+  if (modelDimensions != null) {
+    params.push(normalizeVectorDimensions(modelDimensions));
+    modelDimensionsClause = ` AND model_dims = $${params.length}`;
   }
 
   let chunkConfigClause = '';
@@ -1663,7 +1749,7 @@ export async function getSharedChunksByHash(
        file_type,
        created_at::text AS created_at
      FROM ${table}
-     WHERE content_hash IN (${hashPlaceholders.join(', ')})${modelClause}${chunkConfigClause}
+     WHERE content_hash IN (${hashPlaceholders.join(', ')})${modelClause}${modelDimensionsClause}${chunkConfigClause}
      ORDER BY content_hash, chunk_index ASC`,
     params
   );
@@ -1695,10 +1781,11 @@ export async function searchSharedChunks(
 ): Promise<SearchResult[]> {
   if (!isPostgresDatabase(db)) return [];
 
+  const vectorDimensions = normalizeVectorDimensions(queryVector.length);
   const pool = requirePostgresPool(db);
   const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
   const params: unknown[] = [vectorToSql(queryVector)];
-  const clauses: string[] = [];
+  const clauses: string[] = [`model_dims = ${vectorDimensions}`];
 
   if (options.model) {
     params.push(options.model);
@@ -1736,9 +1823,9 @@ export async function searchSharedChunks(
        line_end,
        file_type,
        created_at::text AS created_at,
-       (vector <=> $1::vector) AS _distance
+       (vector::vector(${vectorDimensions}) <=> $1::vector(${vectorDimensions})) AS _distance
      FROM ${table}${whereClause}
-     ORDER BY vector <=> $1::vector
+     ORDER BY vector::vector(${vectorDimensions}) <=> $1::vector(${vectorDimensions})
      LIMIT $${params.length}`,
     params
   );
@@ -1776,6 +1863,7 @@ export async function searchSharedChunksForWorktree(
 ): Promise<SearchResult[]> {
   if (!isPostgresDatabase(db)) return [];
 
+  const vectorDimensions = normalizeVectorDimensions(queryVector.length);
   const pool = requirePostgresPool(db);
   const sc = quoteIdentifier(SHARED_CHUNKS_TABLE);
   const wm = quoteIdentifier('lgrep_worktree_manifests');
@@ -1805,7 +1893,7 @@ export async function searchSharedChunksForWorktree(
        sc.file_type,
        sc.created_at::text AS created_at,
        wm.relative_path,
-       (sc.vector <=> $1::vector) AS _distance
+       (sc.vector::vector(${vectorDimensions}) <=> $1::vector(${vectorDimensions})) AS _distance
      FROM ${sc} sc
      JOIN ${wm} wm
        ON sc.content_hash = wm.content_hash
@@ -1813,9 +1901,11 @@ export async function searchSharedChunksForWorktree(
        ON w.id = wm.worktree_id
      WHERE wm.worktree_id = $2
        AND sc.model = w.model
+       AND sc.model_dims = w.model_dims
        AND sc.chunk_max_tokens = w.chunk_max_tokens
-       AND sc.chunk_overlap = w.chunk_overlap${extraWhere}
-     ORDER BY sc.vector <=> $1::vector
+       AND sc.chunk_overlap = w.chunk_overlap
+       AND w.model_dims = ${vectorDimensions}${extraWhere}
+     ORDER BY sc.vector::vector(${vectorDimensions}) <=> $1::vector(${vectorDimensions})
      LIMIT $${params.length}`,
     params
   );
@@ -1851,6 +1941,7 @@ export async function searchSharedChunksForProject(
 ): Promise<(SearchResult & { worktreeName?: string })[]> {
   if (!isPostgresDatabase(db)) return [];
 
+  const vectorDimensions = normalizeVectorDimensions(queryVector.length);
   const pool = requirePostgresPool(db);
   const sc = quoteIdentifier(SHARED_CHUNKS_TABLE);
   const wm = quoteIdentifier('lgrep_worktree_manifests');
@@ -1874,7 +1965,7 @@ export async function searchSharedChunksForProject(
 
   const result = await pool.query<Record<string, unknown>>(
     `WITH deduped AS (
-       SELECT DISTINCT ON (sc.content_hash, sc.chunk_index, sc.chunk_max_tokens, sc.chunk_overlap)
+       SELECT DISTINCT ON (sc.content_hash, sc.chunk_index, sc.model_dims, sc.chunk_max_tokens, sc.chunk_overlap)
          sc.content_hash,
          sc.chunk_index,
          sc.model,
@@ -1887,20 +1978,23 @@ export async function searchSharedChunksForProject(
          sc.created_at::text AS created_at,
          wm.relative_path,
          w.name AS worktree_name,
-         (sc.vector <=> $1::vector) AS _distance
+         (sc.vector::vector(${vectorDimensions}) <=> $1::vector(${vectorDimensions})) AS _distance
        FROM ${sc} sc
        JOIN ${wm} wm ON sc.content_hash = wm.content_hash
        JOIN ${wt} w ON wm.worktree_id = w.id
        WHERE w.project_id = $2
          AND sc.model = w.model
+         AND sc.model_dims = w.model_dims
          AND sc.chunk_max_tokens = w.chunk_max_tokens
-         AND sc.chunk_overlap = w.chunk_overlap${extraWhere}
+         AND sc.chunk_overlap = w.chunk_overlap
+         AND w.model_dims = ${vectorDimensions}${extraWhere}
        ORDER BY
          sc.content_hash,
          sc.chunk_index,
+         sc.model_dims,
          sc.chunk_max_tokens,
          sc.chunk_overlap,
-         sc.vector <=> $1::vector
+         sc.vector::vector(${vectorDimensions}) <=> $1::vector(${vectorDimensions})
      )
      SELECT
        sc.content_hash,
@@ -1948,11 +2042,13 @@ export async function contentHashesExist(
   db: IndexDatabase,
   contentHashes: string[],
   model: string,
+  modelDimensions: number,
   chunkConfig: SharedChunkConfig
 ): Promise<Set<string>> {
   if (contentHashes.length === 0) return new Set();
   if (!isPostgresDatabase(db)) return new Set();
 
+  const normalizedDimensions = normalizeVectorDimensions(modelDimensions);
   const pool = requirePostgresPool(db);
   const table = quoteIdentifier(SHARED_CHUNKS_TABLE);
   const params: unknown[] = [];
@@ -1964,6 +2060,8 @@ export async function contentHashesExist(
 
   params.push(model);
   const modelParam = params.length;
+  params.push(normalizedDimensions);
+  const modelDimensionsParam = params.length;
   params.push(chunkConfig.chunkMaxTokens);
   const chunkMaxTokensParam = params.length;
   params.push(chunkConfig.chunkOverlap);
@@ -1973,6 +2071,7 @@ export async function contentHashesExist(
        FROM ${table}
       WHERE content_hash IN (${hashPlaceholders.join(', ')})
         AND model = $${modelParam}
+        AND model_dims = $${modelDimensionsParam}
         AND chunk_max_tokens = $${chunkMaxTokensParam}
         AND chunk_overlap = $${params.length}`,
     params

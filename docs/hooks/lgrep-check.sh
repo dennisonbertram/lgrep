@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lgrep SessionStart hook
-# Auto-starts watcher for current directory if not already running
+# Auto-starts a local watcher only when the active profile uses local storage
 # Resource-aware: limits concurrent indexing
 # Auto-cleans zombies and failed indexes on startup
 
@@ -103,13 +103,17 @@ if ! command -v lgrep &> /dev/null; then
   exit 0
 fi
 
+STORAGE_MODE=$(lgrep config storageMode 2>/dev/null || echo "local")
+if [ "$STORAGE_MODE" != "local" ]; then
+  exit 0
+fi
+
 # Check if embedding provider is configured
 DOCTOR_OUTPUT=$(lgrep doctor --json 2>/dev/null || echo '{}')
 EMBED_STATUS=$(echo "$DOCTOR_OUTPUT" | jq -r '.data.checks[]? | select(.name == "Embedding provider") | .status' 2>/dev/null)
 
 if [ "$EMBED_STATUS" = "error" ] || [ -z "$EMBED_STATUS" ]; then
-  echo "⚠️  lgrep: No embedding provider configured. Run 'lgrep doctor' for details."
-  echo "   Set OPENAI_API_KEY or run 'lgrep setup' for local Ollama."
+  echo "⚠️  lgrep: No embedding provider configured. Run 'lgrep init' for guided setup."
   exit 0
 fi
 

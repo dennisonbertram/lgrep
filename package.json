@@ -1,7 +1,7 @@
 {
   "name": "lgrep",
   "version": "0.1.0",
-  "description": "Local semantic code search CLI - AI-powered grep with embeddings, multi-provider support (Ollama, Anthropic, OpenAI, Groq)",
+  "description": "Semantic code search CLI with local and Postgres-backed cloud profiles",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",

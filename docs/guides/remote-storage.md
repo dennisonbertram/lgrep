@@ -41,16 +41,16 @@ export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
 Configure lgrep to use Postgres for the index:
 
 ```bash
-lgrep config set storageMode postgres
-lgrep config set storageDatabaseUrlEnv LGREP_DATABASE_URL
+lgrep config storageMode postgres
+lgrep config storageDatabaseUrlEnv LGREP_DATABASE_URL
 ```
 
 Point the embedding cache at the same database:
 
 ```bash
-lgrep config set cacheBackend postgres
-lgrep config set cacheDatabaseUrlEnv LGREP_DATABASE_URL
-lgrep config set cacheTableName embedding_cache
+lgrep config cacheBackend postgres
+lgrep config cacheDatabaseUrlEnv LGREP_DATABASE_URL
+lgrep config cacheTableName embedding_cache
 ```
 
 Notes:
@@ -74,18 +74,18 @@ export R2_SECRET_ACCESS_KEY="..."
 Configure lgrep:
 
 ```bash
-lgrep config set storageMode s3
-lgrep config set storageUri s3://my-r2-bucket/lgrep
-lgrep config set storageEndpoint https://<account-id>.r2.cloudflarestorage.com
-lgrep config set storageRegion auto
-lgrep config set storageAccessKeyEnv R2_ACCESS_KEY_ID
-lgrep config set storageSecretKeyEnv R2_SECRET_ACCESS_KEY
+lgrep config storageMode s3
+lgrep config storageUri s3://my-r2-bucket/lgrep
+lgrep config storageEndpoint https://<account-id>.r2.cloudflarestorage.com
+lgrep config storageRegion auto
+lgrep config storageAccessKeyEnv R2_ACCESS_KEY_ID
+lgrep config storageSecretKeyEnv R2_SECRET_ACCESS_KEY
 ```
 
 Optional session token env override:
 
 ```bash
-lgrep config set storageSessionTokenEnv AWS_SESSION_TOKEN
+lgrep config storageSessionTokenEnv AWS_SESSION_TOKEN
 ```
 
 For a machine-local install shared by coding agents on the same machine, prefer the keychain-backed auth flow over repo-local `.env` files:
@@ -106,9 +106,9 @@ This stores the R2 credentials in the local macOS keychain and updates the globa
 The embedding cache can be local or Postgres-backed. You can tune or disable it:
 
 ```bash
-lgrep config set cacheEnabled true
-lgrep config set cacheMaxEntries 50000
-lgrep config set cacheTtlHours 0
+lgrep config cacheEnabled true
+lgrep config cacheMaxEntries 50000
+lgrep config cacheTtlHours 0
 ```
 
 Notes:
@@ -126,13 +126,13 @@ Recommended flow:
 ```bash
 # 1. Point lgrep at Postgres
 export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
-lgrep config set storageMode postgres
-lgrep config set storageDatabaseUrlEnv LGREP_DATABASE_URL
+lgrep config storageMode postgres
+lgrep config storageDatabaseUrlEnv LGREP_DATABASE_URL
 
 # 2. Point the embedding cache at Postgres
-lgrep config set cacheBackend postgres
-lgrep config set cacheDatabaseUrlEnv LGREP_DATABASE_URL
-lgrep config set cacheTableName embedding_cache
+lgrep config cacheBackend postgres
+lgrep config cacheDatabaseUrlEnv LGREP_DATABASE_URL
+lgrep config cacheTableName embedding_cache
 
 # 3. Reindex the repo into Postgres
 lgrep index /path/to/repo --name my-project
@@ -143,9 +143,9 @@ lgrep stats --index my-project
 lgrep search "entry point" --index my-project
 
 # 5. Remove the old local index if you no longer need it
-lgrep config set storageMode local
+lgrep config storageMode local
 lgrep delete my-project
-lgrep config set storageMode postgres
+lgrep config storageMode postgres
 ```
 
 ## Rollback to local storage
@@ -153,10 +153,10 @@ lgrep config set storageMode postgres
 Switch configuration back to local mode:
 
 ```bash
-lgrep config set storageMode local
-lgrep config set storageUri ""
-lgrep config set storageEndpoint ""
-lgrep config set cacheBackend local
+lgrep config storageMode local
+lgrep config storageUri ""
+lgrep config storageEndpoint ""
+lgrep config cacheBackend local
 ```
 
 After rollback, local indexes continue to work as before. Remote indexes remain in whichever backend you were using last until you explicitly delete them while `storageMode` points at that backend, and remote cache rows remain in Postgres until you remove them yourself.
