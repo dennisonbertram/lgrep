@@ -20,6 +20,8 @@ import {
   ensureProjectTables,
   getProject,
 } from '../../storage/project.js';
+import { getServerUrl, queryServer } from '../../server/client.js';
+import type { QuerySearchResponse } from '../../server/query-server.js';
 
 /**
  * Options for the search command.
@@ -101,6 +103,17 @@ export interface SearchCommandResult {
   error?: string;
 }
 
+function shouldUseHostedSearch(options: SearchOptions): boolean {
+  return Boolean(
+    getServerUrl() &&
+    !options.index &&
+    !options.usages &&
+    !options.definition &&
+    !options.type &&
+    (options.project || options.worktree)
+  );
+}
+
 /**
  * Run the search command.
  *
@@ -125,6 +138,41 @@ export async function runSearchCommand(
     // Validate diversity parameter
     if (diversity < 0.0 || diversity > 1.0) {
       throw new Error('Diversity parameter must be between 0.0 and 1.0');
+    }
+
+    if (shouldUseHostedSearch(options)) {
+      spinner?.update('Querying hosted lgrep server...');
+
+      const response = await queryServer({
+        method: 'search',
+        project: options.project,
+        worktree: options.worktree,
+        params: { query, limit, diversity },
+      }) as QuerySearchResponse;
+
+      const scope = response.worktree
+        ? `worktree "${response.worktree}"`
+        : response.project
+          ? `project "${response.project}"`
+          : 'hosted index';
+
+      spinner?.succeed(`Found ${response.count} results for "${query}" in ${scope}`);
+
+      return {
+        success: true,
+        query,
+        indexName: response.worktree ?? response.project ?? options.worktree ?? options.project ?? 'remote',
+        results: response.results.map((result) => ({
+          filePath: result.relativePath,
+          relativePath: result.relativePath,
+          content: result.content,
+          score: result.score,
+          lineStart: result.lineStart,
+          lineEnd: result.lineEnd,
+          chunkIndex: result.chunkIndex,
+        })),
+        count: response.count,
+      };
     }
 
     // Open database

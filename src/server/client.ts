@@ -1,4 +1,5 @@
 import type { QueryRequest } from './query-server.js';
+import { getServerAuthToken } from './auth.js';
 
 const DEFAULT_PORT = 8420;
 
@@ -9,6 +10,17 @@ export function getServerUrl(): string | null {
   return process.env['LGREP_SERVER_URL'] ?? null;
 }
 
+function createServerHeaders(): Record<string, string> {
+  const token = getServerAuthToken();
+  if (!token) {
+    return {};
+  }
+
+  return {
+    Authorization: `Bearer ${token}`,
+  };
+}
+
 /**
  * Check if a server is running at the given URL.
  */
@@ -17,9 +29,12 @@ export async function isServerRunning(url?: string): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 2000);
-    const resp = await fetch(`${base}/health`, { signal: controller.signal });
+    const resp = await fetch(`${base}/health`, {
+      signal: controller.signal,
+      headers: createServerHeaders(),
+    });
     clearTimeout(timeout);
-    return resp.ok;
+    return resp.ok || resp.status === 401 || resp.status === 403;
   } catch {
     return false;
   }
@@ -36,7 +51,10 @@ export async function queryServer(
 
   const resp = await fetch(`${base}/query`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...createServerHeaders(),
+    },
     body: JSON.stringify(request),
   });
 
@@ -54,6 +72,14 @@ export async function queryServer(
  */
 export async function getServerHealth(url?: string): Promise<unknown> {
   const base = url ?? getServerUrl() ?? `http://localhost:${DEFAULT_PORT}`;
-  const resp = await fetch(`${base}/health`);
-  return resp.json();
+  const resp = await fetch(`${base}/health`, {
+    headers: createServerHeaders(),
+  });
+  const data = await resp.json();
+
+  if (!resp.ok) {
+    throw new Error((data as { error?: string }).error ?? `Server error: ${resp.status}`);
+  }
+
+  return data;
 }

@@ -75,6 +75,7 @@ In local mode, the SessionStart hook can start local watchers automatically. In 
 | `lgrep clean` | Remove failed/stale/zombie indexes |
 | `lgrep init` | Guided setup for local or cloud profiles |
 | `lgrep profile` | Manage named local/cloud profiles |
+| `lgrep server` | Run or inspect the shared hosted query service |
 
 ### Code Intelligence
 
@@ -143,6 +144,28 @@ Create `.lgrep.json` in your repo root to skip `--index` flags:
 For cloud mode, lgrep defaults to Postgres for both the index and the cache. S3/R2 is still supported as an advanced/manual path, but it is no longer the default onboarding route.
 
 See [docs/guides/remote-storage.md](docs/guides/remote-storage.md) for setup.
+
+## Hosted Query Service Preview
+
+You can also run lgrep behind a shared HTTP query service instead of giving every agent direct database credentials.
+
+Server:
+
+```bash
+export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
+export LGREP_SERVER_AUTH_TOKEN="replace-me"
+lgrep server start --port 8420
+```
+
+Client:
+
+```bash
+export LGREP_SERVER_URL="https://lgrep.example.com"
+export LGREP_SERVER_AUTH_TOKEN="replace-me"
+lgrep search "authentication flow" --project my-project
+```
+
+Today this hosted path is a bearer-token-protected, single-tenant query layer for semantic search. See [docs/guides/hosted-query-service.md](docs/guides/hosted-query-service.md) for setup and current limits.
 
 ## Programmatic API
 

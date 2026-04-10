@@ -2,6 +2,7 @@ import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { ensureSchema } from '../../storage/migrations.js';
 import { startQueryServer } from '../../server/query-server.js';
 import { isServerRunning, getServerHealth } from '../../server/client.js';
+import { DEFAULT_SERVER_AUTH_TOKEN_ENV, getServerAuthToken } from '../../server/auth.js';
 import { requirePostgresPool } from '../../storage/postgres.js';
 
 const DEFAULT_PORT = 8420;
@@ -9,6 +10,10 @@ const DEFAULT_PORT = 8420;
 export interface ServerStartResult {
   success: boolean;
   port: number;
+  url?: string;
+  authEnabled?: boolean;
+  authTokenEnv?: string;
+  warning?: string;
   error?: string;
 }
 
@@ -20,17 +25,19 @@ export async function runServerStartCommand(opts: {
   json?: boolean;
 }): Promise<ServerStartResult> {
   const port = opts.port ?? DEFAULT_PORT;
+  const url = `http://localhost:${port}`;
+  const authToken = getServerAuthToken();
 
   // Check if already running
-  const running = await isServerRunning(`http://localhost:${port}`);
+  const running = await isServerRunning(url);
   if (running) {
-    return { success: false, port, error: `Server already running on port ${port}` };
+    return { success: false, port, url, error: `Server already running on port ${port}` };
   }
 
   const db = await openConfiguredDatabase();
 
   if (db.mode !== 'postgres') {
-    return { success: false, port, error: 'Query server requires Postgres storage mode' };
+    return { success: false, port, url, error: 'Query server requires Postgres storage mode' };
   }
 
   // Run schema migrations
@@ -40,9 +47,22 @@ export async function runServerStartCommand(opts: {
     console.log(`Applied ${applied} schema migration(s).`);
   }
 
-  startQueryServer(port, db);
+  if (!authToken && !opts.json) {
+    console.warn(
+      `Warning: ${DEFAULT_SERVER_AUTH_TOKEN_ENV} is not set, so the query server will accept unauthenticated requests.`
+    );
+  }
 
-  return { success: true, port };
+  startQueryServer(port, db, { authToken });
+
+  return {
+    success: true,
+    port,
+    url,
+    authEnabled: Boolean(authToken),
+    authTokenEnv: authToken ? DEFAULT_SERVER_AUTH_TOKEN_ENV : undefined,
+    warning: authToken ? undefined : `${DEFAULT_SERVER_AUTH_TOKEN_ENV} is not set`,
+  };
 }
 
 /**

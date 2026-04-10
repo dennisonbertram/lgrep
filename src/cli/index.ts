@@ -2427,7 +2427,7 @@ projectCmd
 // Server commands - shared HTTP query server
 const serverCmd = program
   .command('server')
-  .description('Manage the lgrep query server (replaces per-index daemons for cloud deployment)');
+  .description('Manage the lgrep query server (shared hosted-query layer for Postgres-backed cloud deployment)');
 
 serverCmd
   .command('start')
