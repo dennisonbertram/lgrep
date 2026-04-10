@@ -28,6 +28,28 @@ What stays local:
 - `config.json`
 - first-run state
 
+## Hosted query service preview
+
+If you want agents to query lgrep without direct database credentials, run the shared query server on top of the same Postgres-backed setup:
+
+```bash
+export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
+export LGREP_SERVER_AUTH_TOKEN="replace-me"
+
+lgrep server start --port 8420
+```
+
+Clients and agents can then query through the hosted endpoint:
+
+```bash
+export LGREP_SERVER_URL="https://lgrep.example.com"
+export LGREP_SERVER_AUTH_TOKEN="replace-me"
+
+lgrep search "entry point" --project my-project
+```
+
+This hosted path is currently a single-token, single-tenant query layer. See [hosted-query-service.md](./hosted-query-service.md) for the supported workflow and current limitations.
+
 ## Preferred setup: Postgres for index and cache
 
 Create or use a Postgres database with the `vector` extension available. Many managed providers expose this as `pgvector`.
@@ -166,7 +188,8 @@ After rollback, local indexes continue to work as before. Remote indexes remain 
 - `stats` only reports database directory size in local mode.
 - `doctor` and `clean` now query the storage layer instead of assuming a local `db` directory.
 - The MCP server uses the same storage config resolution as the CLI.
+- The hosted query service uses `LGREP_SERVER_AUTH_TOKEN` for bearer-token protection.
 - The Postgres index and the Postgres cache can share one database or use separate databases.
 - The remote cache currently uses environment-variable configuration for the Postgres connection string.
 - S3/R2 remains supported, but it is now the secondary path rather than the default recommendation.
-- This layout is currently single-tenant. If lgrep becomes an external or hosted product, we will need tenant isolation for prefixes, metadata, credentials, and write coordination.
+- The current cloud layout and hosted query service are still single-tenant. A full hosted product will still need tenant isolation for metadata, credentials, cache scope, and write coordination.

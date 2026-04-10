@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { createEmbeddingClient } from '../core/embeddings.js';
+import { DEFAULT_SERVER_AUTH_TOKEN_ENV, isAuthorizedRequest } from './auth.js';
 import {
   searchSharedChunksForWorktree,
   searchSharedChunksForProject,
@@ -26,9 +27,45 @@ export interface QueryRequest {
   params: Record<string, unknown>;
 }
 
+export interface QuerySearchResponse {
+  project?: string;
+  worktree?: string;
+  results: Array<{
+    relativePath: string;
+    content: string;
+    score: number;
+    lineStart?: number;
+    lineEnd?: number;
+    chunkIndex: number;
+  }>;
+  count: number;
+}
+
+export interface QueryHealthResponse {
+  status: 'healthy' | 'degraded';
+  uptime: string;
+  auth: {
+    enabled: boolean;
+    tokenEnv?: string;
+  };
+  postgres: {
+    connected: boolean;
+    pool_size: number;
+    active_connections: number;
+    idle_connections: number;
+  };
+  stats: {
+    projects: number;
+    worktrees: number;
+    shared_chunks: number;
+    unique_content_hashes: number;
+  };
+}
+
 interface ServerState {
   db: IndexDatabase;
   startedAt: Date;
+  authToken: string | null;
 }
 
 let state: ServerState | null = null;
@@ -92,7 +129,9 @@ async function handleSearch(db: IndexDatabase, request: QueryRequest, res: Serve
     );
     const reranked = rerankerWithMMR(searchResults, queryVector, diversity).slice(0, limit);
 
-    jsonResponse(res, 200, {
+    const response: QuerySearchResponse = {
+      project: proj.name,
+      worktree: request.worktree,
       results: reranked.map((r) => ({
         relativePath: r.relativePath,
         content: r.content,
@@ -102,7 +141,8 @@ async function handleSearch(db: IndexDatabase, request: QueryRequest, res: Serve
         chunkIndex: r.chunkIndex,
       })),
       count: reranked.length,
-    });
+    };
+    jsonResponse(res, 200, response);
     return;
   }
 
@@ -128,7 +168,8 @@ async function handleSearch(db: IndexDatabase, request: QueryRequest, res: Serve
     );
     const reranked = rerankerWithMMR(searchResults, queryVector, diversity).slice(0, limit);
 
-    jsonResponse(res, 200, {
+    const response: QuerySearchResponse = {
+      worktree: wt.name,
       results: reranked.map((r) => ({
         relativePath: r.relativePath,
         content: r.content,
@@ -138,14 +179,15 @@ async function handleSearch(db: IndexDatabase, request: QueryRequest, res: Serve
         chunkIndex: r.chunkIndex,
       })),
       count: reranked.length,
-    });
+    };
+    jsonResponse(res, 200, response);
     return;
   }
 
   jsonResponse(res, 400, { error: 'Either --project or --worktree is required for server search' });
 }
 
-async function handleHealth(db: IndexDatabase, res: ServerResponse): Promise<void> {
+async function handleHealth(db: IndexDatabase, authToken: string | null, res: ServerResponse): Promise<void> {
   const poolStats = db.pool
     ? {
         totalCount: db.pool.totalCount,
@@ -181,9 +223,13 @@ async function handleHealth(db: IndexDatabase, res: ServerResponse): Promise<voi
   const hours = Math.floor(uptime / 3600);
   const minutes = Math.floor((uptime % 3600) / 60);
 
-  jsonResponse(res, 200, {
+  const response: QueryHealthResponse = {
     status: pgConnected ? 'healthy' : 'degraded',
     uptime: `${hours}h ${minutes}m`,
+    auth: {
+      enabled: Boolean(authToken),
+      tokenEnv: authToken ? DEFAULT_SERVER_AUTH_TOKEN_ENV : undefined,
+    },
     postgres: {
       connected: pgConnected,
       pool_size: poolStats?.totalCount ?? 0,
@@ -196,10 +242,24 @@ async function handleHealth(db: IndexDatabase, res: ServerResponse): Promise<voi
       shared_chunks: sharedChunks,
       unique_content_hashes: uniqueHashes,
     },
+  };
+
+  jsonResponse(res, 200, response);
+}
+
+function unauthorizedResponse(res: ServerResponse): void {
+  res.setHeader('WWW-Authenticate', 'Bearer realm="lgrep"');
+  jsonResponse(res, 401, {
+    error: `Unauthorized. Set ${DEFAULT_SERVER_AUTH_TOKEN_ENV} and send it as a Bearer token.`,
   });
 }
 
-async function handleRequest(db: IndexDatabase, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleRequest(
+  db: IndexDatabase,
+  authToken: string | null,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
@@ -211,8 +271,13 @@ async function handleRequest(db: IndexDatabase, req: IncomingMessage, res: Serve
     return;
   }
 
+  if (!isAuthorizedRequest(req, authToken)) {
+    unauthorizedResponse(res);
+    return;
+  }
+
   if (req.url === '/health' && req.method === 'GET') {
-    await handleHealth(db, res);
+    await handleHealth(db, authToken, res);
     return;
   }
 
@@ -231,7 +296,7 @@ async function handleRequest(db: IndexDatabase, req: IncomingMessage, res: Serve
         await handleSearch(db, request, res);
         return;
       case 'health':
-        await handleHealth(db, res);
+        await handleHealth(db, authToken, res);
         return;
       case 'worktrees': {
         await ensureWorktreeTables(db);
@@ -292,19 +357,26 @@ async function handleRequest(db: IndexDatabase, req: IncomingMessage, res: Serve
 /**
  * Start the lgrep query server.
  */
-export function startQueryServer(port: number, db: IndexDatabase): Server {
-  state = { db, startedAt: new Date() };
+export function startQueryServer(
+  port: number,
+  db: IndexDatabase,
+  options: {
+    authToken?: string | null;
+  } = {},
+): Server {
+  const authToken = options.authToken ?? null;
+  state = { db, startedAt: new Date(), authToken };
 
   const server = createServer(async (req, res) => {
     try {
-      await handleRequest(db, req, res);
+      await handleRequest(db, authToken, req, res);
     } catch (err) {
       jsonResponse(res, 500, { error: (err as Error).message });
     }
   });
 
   server.listen(port, () => {
-    console.log(`lgrep query server listening on port ${port}`);
+    console.log(`lgrep query server listening on port ${port}${authToken ? ' (auth enabled)' : ' (auth disabled)'}`);
   });
 
   return server;
