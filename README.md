@@ -76,6 +76,7 @@ In local mode, the SessionStart hook can start local watchers automatically. In 
 | `lgrep init` | Guided setup for local or cloud profiles |
 | `lgrep profile` | Manage named local/cloud profiles |
 | `lgrep server` | Run or inspect the shared hosted query service |
+| `lgrep server token` | Create and inspect scoped hosted query tokens |
 
 ### Code Intelligence
 
@@ -153,19 +154,26 @@ Server:
 
 ```bash
 export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
-export LGREP_SERVER_AUTH_TOKEN="replace-me"
 lgrep server start --port 8420
 ```
 
-Client:
+Create a scoped token for one project:
+
+```bash
+lgrep server token create --label "repo-main agents" --projects repo-main
+```
+
+Client or agent:
 
 ```bash
 export LGREP_SERVER_URL="https://lgrep.example.com"
-export LGREP_SERVER_AUTH_TOKEN="replace-me"
-lgrep search "authentication flow" --project my-project
+export LGREP_SERVER_AUTH_TOKEN="paste-the-created-token"
+lgrep project info repo-main
+lgrep worktree list --project repo-main
+lgrep search "authentication flow" --project repo-main
 ```
 
-Today this hosted path is a bearer-token-protected, single-tenant query layer for semantic search. See [docs/guides/hosted-query-service.md](docs/guides/hosted-query-service.md) for setup and current limits.
+Today this hosted path is a bearer-token-protected, single-tenant query layer for project/worktree discovery and semantic search. See [docs/guides/hosted-query-service.md](docs/guides/hosted-query-service.md) for the hosted multi-worktree workflow and current limits.
 
 ## Programmatic API
 

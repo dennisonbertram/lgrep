@@ -54,6 +54,8 @@ import {
 } from '../../storage/project.js';
 import { withWorktreeLock } from '../../storage/locks.js';
 import { createSpinner } from '../utils/progress.js';
+import { getServerUrl, queryServer } from '../../server/client.js';
+import type { QueryDiffResponse, QueryWorktreesResponse } from '../../server/query-server.js';
 
 // ---------------------------------------------------------------------------
 // worktree create
@@ -691,6 +693,16 @@ export async function runWorktreeForkCommand(
 export async function runWorktreeListCommand(
   opts: { project?: string; json?: boolean } = {},
 ): Promise<Worktree[]> {
+  if (getServerUrl()) {
+    const response = await queryServer({
+      method: 'worktrees',
+      project: opts.project,
+      params: {},
+    }) as QueryWorktreesResponse;
+
+    return response.worktrees as Worktree[];
+  }
+
   const db = await openConfiguredDatabase();
   try {
     await ensureWorktreeTables(db);
@@ -718,6 +730,15 @@ export async function runWorktreeDiffCommand(
   b: string,
   opts: { json?: boolean } = {},
 ): Promise<WorktreeDiffEntry[]> {
+  if (getServerUrl()) {
+    const response = await queryServer({
+      method: 'diff',
+      params: { a, b },
+    }) as QueryDiffResponse;
+
+    return response.diffs;
+  }
+
   const db = await openConfiguredDatabase();
   try {
     await ensureWorktreeTables(db);
