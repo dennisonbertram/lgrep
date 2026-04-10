@@ -14,6 +14,16 @@ import {
 } from '../../storage/project.js';
 import { ensureWorktreeTables, listWorktrees } from '../../storage/worktree.js';
 import { createSpinner } from '../utils/progress.js';
+import { getServerUrl, queryServer } from '../../server/client.js';
+import type { QueryProjectInfoResponse, QueryProjectsResponse, RemoteProject } from '../../server/query-server.js';
+
+function expandRemoteProject(project: RemoteProject): Project {
+  return {
+    ...project,
+    excludePatterns: [],
+    metadata: {},
+  };
+}
 
 // ---------------------------------------------------------------------------
 // project create
@@ -75,6 +85,14 @@ export async function runProjectCreateCommand(
 export async function runProjectListCommand(
   opts: { json?: boolean } = {},
 ): Promise<Project[]> {
+  if (getServerUrl()) {
+    const response = await queryServer({
+      method: 'projects',
+      params: {},
+    }) as QueryProjectsResponse;
+    return response.projects.map(expandRemoteProject);
+  }
+
   const db = await openConfiguredDatabase();
   try {
     await ensureProjectTables(db);
@@ -98,6 +116,20 @@ export async function runProjectInfoCommand(
   nameOrId: string,
   opts: { json?: boolean } = {},
 ): Promise<ProjectInfoResult> {
+  if (getServerUrl()) {
+    const response = await queryServer({
+      method: 'project-info',
+      project: nameOrId,
+      params: {},
+    }) as QueryProjectInfoResponse;
+
+    return {
+      project: expandRemoteProject(response.project),
+      stats: response.stats,
+      worktrees: response.worktrees,
+    };
+  }
+
   const db = await openConfiguredDatabase();
   try {
     await ensureProjectTables(db);

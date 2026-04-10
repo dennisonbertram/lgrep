@@ -34,6 +34,13 @@ export function getConfigPath(): string {
 }
 
 /**
+ * Get the path to the hosted query server token store.
+ */
+export function getServerTokensPath(): string {
+  return join(getLgrepHome(), 'server-tokens.json');
+}
+
+/**
  * Get the path to the cache directory.
  */
 export function getCachePath(): string {

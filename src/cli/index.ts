@@ -53,6 +53,7 @@ import {
   runProjectDeleteCommand,
 } from './commands/project.js';
 import { runServerStartCommand, runServerStatusCommand } from './commands/server.js';
+import { runServerTokenCreateCommand, runServerTokenListCommand } from './commands/server-token.js';
 import { runGcCommand } from './commands/gc.js';
 import {
   runProfileCreateCommand,
@@ -2485,6 +2486,12 @@ serverCmd
 
       console.log(`\nServer Status: ${result['status']}`);
       console.log(`  Uptime: ${result['uptime']}`);
+      const auth = result['auth'] as Record<string, unknown> | undefined;
+      if (auth) {
+        console.log(`  Auth: ${auth['enabled'] ? auth['mode'] : 'disabled'}`);
+        if (auth['tokenFile']) console.log(`    Token store: ${auth['tokenFile']}`);
+        if (typeof auth['tokenCount'] === 'number') console.log(`    Scoped tokens: ${auth['tokenCount']}`);
+      }
       const pg = result['postgres'] as Record<string, unknown> | undefined;
       if (pg) {
         console.log(`  Postgres: ${pg['connected'] ? 'connected' : 'disconnected'}`);
@@ -2497,6 +2504,90 @@ serverCmd
         console.log(`  Shared chunks: ${stats['shared_chunks']}`);
       }
       console.log('');
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+const serverTokenCmd = serverCmd
+  .command('token')
+  .description('Manage scoped bearer tokens for the hosted query service');
+
+serverTokenCmd
+  .command('create')
+  .description('Create a scoped bearer token for one or more projects')
+  .requiredOption('--label <label>', 'Human-readable label for the token')
+  .option('--projects <names>', 'Comma-separated project names or IDs')
+  .option('--worktrees <names>', 'Optional comma-separated worktree names or IDs')
+  .option('--all-projects', 'Allow access to all projects')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: {
+    label: string;
+    projects?: string;
+    worktrees?: string;
+    allProjects?: boolean;
+    json?: boolean;
+  }) => {
+    try {
+      const result = await runServerTokenCreateCommand(options);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(0);
+      }
+
+      console.log('\nCreated hosted query token:\n');
+      console.log(`  Label: ${result.label}`);
+      console.log(`  Token ID: ${result.id}`);
+      console.log(`  Projects: ${result.projects?.join(', ') ?? 'all'}`);
+      console.log(`  Worktrees: ${result.worktrees?.join(', ') ?? 'all visible in scope'}`);
+      console.log(`  Token store: ${result.path}`);
+      console.log('\nSave this token now. It will not be shown again:\n');
+      console.log(result.token);
+      console.log('');
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+serverTokenCmd
+  .command('list')
+  .description('List configured hosted query tokens without revealing secrets')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    try {
+      const result = await runServerTokenListCommand();
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(0);
+      }
+
+      if (result.tokens.length === 0) {
+        console.log(`No scoped tokens found in ${result.path}.`);
+        return;
+      }
+
+      console.log(`\nScoped hosted query tokens (${result.tokens.length})`);
+      console.log(`  Store: ${result.path}`);
+      console.log('');
+      for (const token of result.tokens) {
+        console.log(`  ${token.label} (${token.id})`);
+        console.log(`    Projects: ${token.projects?.join(', ') ?? 'all'}`);
+        console.log(`    Worktrees: ${token.worktrees?.join(', ') ?? 'all visible in scope'}`);
+        console.log(`    Created: ${token.createdAt}`);
+        console.log('');
+      }
     } catch (err) {
       if (options.json) {
         console.log(JSON.stringify({ error: (err as Error).message }));
