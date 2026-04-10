@@ -21,6 +21,26 @@ Today it does not yet give you:
 
 Think of this as a secure single-tenant team deployment, not the final lgrep Cloud product.
 
+## The simple version
+
+If your goal is:
+
+- one hosted Postgres database
+- one repo-level project
+- many worktrees under that project
+- agents querying it without direct database credentials
+
+then the flow is:
+
+1. Point a `cloud` profile at Postgres.
+2. Create a `project`.
+3. Add `worktree`s for each checkout or branch you want searchable.
+4. Create a scoped token with `lgrep server token create`.
+5. Run `lgrep server start`.
+6. Give agents only `LGREP_SERVER_URL` and `LGREP_SERVER_AUTH_TOKEN`.
+
+That is the current hosted setup. You do not need to wait for the later roadmap items to start using it.
+
 ## Server setup
 
 The server host needs the same Postgres-backed configuration used for BYO cloud mode:
@@ -153,6 +173,33 @@ The response includes:
 - Remote CLI usage currently covers hosted discovery plus semantic search. Code-intelligence commands still use direct storage access.
 - Indexing is still a write-side CLI workflow pointed at Postgres, not a managed hosted job system.
 - Token management is local-file-based. There is no hosted admin API yet.
+
+## What "next step" means
+
+There are two different meanings of "next step":
+
+### Next step for you as a user
+
+Use the workflow in this guide:
+
+1. create the cloud profile
+2. create a project
+3. add worktrees
+4. create a scoped token
+5. start the hosted query server
+6. point agents at the hosted URL
+
+### Next step for the product
+
+The next engineering milestones are:
+
+- hosted `context`
+- hosted `callers`
+- hosted `impact`
+- hosted MCP
+- eventually hosted indexing workers and full multi-tenancy
+
+Those are improvements to the hosted experience. They are not blockers for the basic "one hosted DB, many worktrees" workflow that exists now.
 
 ## Recommended deployment shape
 

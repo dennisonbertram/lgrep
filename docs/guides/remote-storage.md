@@ -57,6 +57,8 @@ lgrep search "entry point" --project repo-main
 
 This hosted path is currently a single-tenant query layer with project/worktree-scoped tokens. See [hosted-query-service.md](./hosted-query-service.md) for the supported workflow and current limitations.
 
+If your real goal is "one hosted Postgres database with many worktrees under one project", start with [hosted-query-service.md](./hosted-query-service.md). That guide is the clearest end-to-end path for the current hosted setup.
+
 ## Preferred setup: Postgres for index and cache
 
 Create or use a Postgres database with the `vector` extension available. Many managed providers expose this as `pgvector`.
