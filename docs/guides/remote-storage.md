@@ -35,20 +35,14 @@ If you want agents to query lgrep without direct database credentials, run the s
 ```bash
 export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
 
-lgrep server start --port 8420
-```
-
-Create a scoped token for the hosted project you want agents to access:
-
-```bash
-lgrep server token create --label "repo-main agents" --projects repo-main
+lgrep server bootstrap /path/to/repo --project repo-main --branch main
 ```
 
 Clients and agents can then query through the hosted endpoint:
 
 ```bash
 export LGREP_SERVER_URL="https://lgrep.example.com"
-export LGREP_SERVER_AUTH_TOKEN="paste-the-created-token"
+export LGREP_SERVER_AUTH_TOKEN="token-printed-by-bootstrap"
 
 lgrep project info repo-main
 lgrep worktree list --project repo-main

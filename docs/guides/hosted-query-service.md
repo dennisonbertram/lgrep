@@ -41,6 +41,41 @@ then the flow is:
 
 That is the current hosted setup. You do not need to wait for the later roadmap items to start using it.
 
+## One-command bootstrap
+
+If you want the quickest path, use:
+
+```bash
+export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
+
+lgrep server bootstrap /path/to/repo \
+  --project repo-main \
+  --branch main \
+  --worktree 'feature-login|/path/to/repo-feature-login|feature/login' \
+  --worktree 'feature-billing|/path/to/repo-feature-billing|feature/billing'
+```
+
+What this does:
+
+- configures the `cloud` profile for Postgres
+- creates the project if it does not exist
+- creates or updates the main worktree
+- creates or updates additional worktrees
+- mints a scoped hosted token for the project
+- prints the exact server and client commands to use next
+
+The `--worktree` format is:
+
+```bash
+name|/absolute/path/to/worktree|branch
+```
+
+The branch part is optional:
+
+```bash
+name|/absolute/path/to/worktree
+```
+
 ## Server setup
 
 The server host needs the same Postgres-backed configuration used for BYO cloud mode:
@@ -53,6 +88,8 @@ lgrep config storageDatabaseUrlEnv LGREP_DATABASE_URL
 lgrep config cacheBackend postgres
 lgrep config cacheDatabaseUrlEnv LGREP_DATABASE_URL
 ```
+
+If you prefer to do it manually instead of using `lgrep server bootstrap`, the manual flow is below.
 
 Create the project you want to expose:
 

@@ -54,6 +54,7 @@ import {
 } from './commands/project.js';
 import { runServerStartCommand, runServerStatusCommand } from './commands/server.js';
 import { runServerTokenCreateCommand, runServerTokenListCommand } from './commands/server-token.js';
+import { runServerBootstrapCommand } from './commands/server-bootstrap.js';
 import { runGcCommand } from './commands/gc.js';
 import {
   runProfileCreateCommand,
@@ -2429,6 +2430,90 @@ projectCmd
 const serverCmd = program
   .command('server')
   .description('Manage the lgrep query server (shared hosted-query layer for Postgres-backed cloud deployment)');
+
+serverCmd
+  .command('bootstrap <path>')
+  .description('Bootstrap a hosted Postgres project with one main worktree, optional additional worktrees, and a scoped token')
+  .option('--profile <name>', 'Profile name to configure', 'cloud')
+  .option('--project <name>', 'Project name (defaults to the repo directory name)')
+  .option('--main-name <name>', 'Name for the main worktree', 'main')
+  .option('--branch <branch>', 'Branch name for the main worktree')
+  .option('--worktree <spec...>', 'Additional worktree spec: "name|/path/to/worktree" or "name|/path/to/worktree|branch"')
+  .option('--database-url-env <name>', 'Environment variable holding the Postgres URL', 'LGREP_DATABASE_URL')
+  .option('--database-url <url>', 'Postgres URL to use for this bootstrap run')
+  .option('--token-label <label>', 'Label for the scoped hosted token')
+  .option('--port <port>', 'Suggested hosted query server port', '8420')
+  .option('--server-url <url>', 'Public URL that clients should use for the hosted server')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (path: string, options: {
+    profile?: string;
+    project?: string;
+    mainName?: string;
+    branch?: string;
+    worktree?: string[];
+    databaseUrlEnv?: string;
+    databaseUrl?: string;
+    tokenLabel?: string;
+    port?: string;
+    serverUrl?: string;
+    json?: boolean;
+  }) => {
+    try {
+      const result = await runServerBootstrapCommand({
+        path,
+        profile: options.profile,
+        project: options.project,
+        mainName: options.mainName,
+        branch: options.branch,
+        worktrees: options.worktree,
+        databaseUrlEnv: options.databaseUrlEnv,
+        databaseUrl: options.databaseUrl,
+        tokenLabel: options.tokenLabel,
+        port: options.port ? parseInt(options.port, 10) : undefined,
+        serverUrl: options.serverUrl,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(0);
+      }
+
+      console.log('\nHosted project bootstrapped.\n');
+      console.log(`  Profile: ${result.profile}`);
+      console.log(`  Config: ${result.configPath}`);
+      console.log(`  Project: ${result.project.name}${result.project.created ? ' (created)' : ' (existing)'}`);
+      console.log(`  Main worktree: ${result.mainWorktree.name} (${result.mainWorktree.action})`);
+      for (const worktree of result.additionalWorktrees) {
+        console.log(`  Additional worktree: ${worktree.name} (${worktree.action})`);
+      }
+      console.log('\nHosted token');
+      console.log(`  Label: ${result.token.label}`);
+      console.log(`  Token ID: ${result.token.id}`);
+      console.log(`  Store: ${result.token.path}`);
+      console.log('\nSave this token now. It will not be shown again:\n');
+      console.log(result.token.value);
+      console.log('\nServer');
+      console.log(`  Start: ${result.server.startCommand}`);
+      console.log(`  tmux:  ${result.server.tmuxCommand}`);
+      console.log(`  Status: ${result.server.statusCommand}`);
+      console.log('\nClient env');
+      console.log(`  export ${result.client.serverUrlEnv}="${result.server.serverUrl}"`);
+      console.log(`  export ${result.client.tokenEnv}="${result.token.value}"`);
+      console.log('\nExample commands');
+      for (const command of result.client.exampleCommands) {
+        console.log(`  ${command}`);
+      }
+      console.log('');
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
 
 serverCmd
   .command('start')

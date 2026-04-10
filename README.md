@@ -76,6 +76,7 @@ In local mode, the SessionStart hook can start local watchers automatically. In 
 | `lgrep init` | Guided setup for local or cloud profiles |
 | `lgrep profile` | Manage named local/cloud profiles |
 | `lgrep server` | Run or inspect the shared hosted query service |
+| `lgrep server bootstrap` | Bootstrap a hosted project, worktrees, and token |
 | `lgrep server token` | Create and inspect scoped hosted query tokens |
 
 ### Code Intelligence
@@ -150,24 +151,21 @@ See [docs/guides/remote-storage.md](docs/guides/remote-storage.md) for setup.
 
 You can also run lgrep behind a shared HTTP query service instead of giving every agent direct database credentials.
 
-Server:
+Fastest setup:
 
 ```bash
 export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
-lgrep server start --port 8420
+lgrep server bootstrap /path/to/repo \
+  --project repo-main \
+  --branch main \
+  --worktree 'feature-login|/path/to/repo-feature-login|feature/login'
 ```
 
-Create a scoped token for one project:
-
-```bash
-lgrep server token create --label "repo-main agents" --projects repo-main
-```
-
-Client or agent:
+Then start the server with the command it prints, and on clients or agents:
 
 ```bash
 export LGREP_SERVER_URL="https://lgrep.example.com"
-export LGREP_SERVER_AUTH_TOKEN="paste-the-created-token"
+export LGREP_SERVER_AUTH_TOKEN="token-printed-by-bootstrap"
 lgrep project info repo-main
 lgrep worktree list --project repo-main
 lgrep search "authentication flow" --project repo-main
