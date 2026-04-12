@@ -7,10 +7,13 @@ import { join, dirname } from 'node:path';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { loadConfigSync } from '../../storage/config.js';
 
 export interface InstallMcpOptions {
   force?: boolean;
   json?: boolean;
+  serverUrl?: string;
+  serverAuthToken?: string;
 }
 
 export interface InstallMcpResult {
@@ -21,10 +24,19 @@ export interface InstallMcpResult {
   error?: string;
 }
 
-function getHostedMcpEnv(): Record<string, string> {
+function getHostedMcpEnv(options: InstallMcpOptions = {}): Record<string, string> {
+  const config = loadConfigSync();
   const env: Record<string, string> = {};
-  for (const key of ['LGREP_SERVER_URL', 'LGREP_SERVER_AUTH_TOKEN', 'LGREP_PROFILE']) {
-    const value = process.env[key]?.trim();
+  const hostedEnv = {
+    LGREP_SERVER_URL: options.serverUrl?.trim() || process.env['LGREP_SERVER_URL']?.trim() || config.serverUrl.trim(),
+    LGREP_SERVER_AUTH_TOKEN:
+      options.serverAuthToken?.trim()
+      || process.env['LGREP_SERVER_AUTH_TOKEN']?.trim()
+      || config.serverAuthToken.trim(),
+    LGREP_PROFILE: process.env['LGREP_PROFILE']?.trim(),
+  };
+
+  for (const [key, value] of Object.entries(hostedEnv)) {
     if (value) {
       env[key] = value;
     }
@@ -92,7 +104,7 @@ export async function runInstallMcpCommand(
     mcpServers.lgrep = {
       command: 'node',
       args: [mcpServerPath],
-      env: getHostedMcpEnv(),
+      env: getHostedMcpEnv(options),
     };
 
     // Write updated settings

@@ -8,7 +8,7 @@ Today it gives you:
 
 - a shared HTTP query service backed by Postgres
 - bearer-token protection for that service
-- filesystem-backed scoped tokens for self-hosted deployments on the same machine as the query server
+- filesystem-backed scoped tokens for self-hosted SSH deployments where you control the server host
 - remote project/worktree discovery from the CLI when `LGREP_SERVER_URL` is set
 - remote semantic search from the CLI when `LGREP_SERVER_URL` is set
 - remote `callers`, `impact`, and `context` when `LGREP_SERVER_URL` is set and you target a project or worktree
@@ -28,21 +28,55 @@ Think of this as a secure single-tenant team deployment, not the final lgrep Clo
 If your goal is:
 
 - one hosted Postgres database
+- one Mac mini, Hetzner box, or other SSH-accessible server host
 - one repo-level project
 - many worktrees under that project
 - agents querying it without direct database credentials
 
 then the flow is:
 
-1. Point a `cloud` profile at Postgres.
+1. Provision the remote host with `lgrep server install-remote <ssh-target> --server-url <url>`.
 2. Create a `project`.
 3. Add `worktree`s for each checkout or branch you want searchable.
-4. Run `lgrep server start`.
-5. For self-hosted deployments, create a scoped token with `lgrep server token create`.
-6. For Railway and similar remote deployments today, use the shared `LGREP_SERVER_AUTH_TOKEN` service secret.
-7. Give agents only `LGREP_SERVER_URL` and `LGREP_SERVER_AUTH_TOKEN`.
+4. Give agents the configured hosted URL and token, or let the global install write them into the active lgrep profile on this machine.
 
 That is the current hosted setup. You do not need to wait for the later roadmap items to start using it.
+
+## SSH self-hosted setup
+
+This is the recommended deployment path today for a single developer who wants a dedicated Mac mini or Linux box to serve hosted lgrep to local tools and agents.
+
+Prerequisites on the remote host:
+
+- SSH access
+- Node.js and npm installed
+- network access to the Postgres instance
+
+Run:
+
+```bash
+export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
+
+lgrep server install-remote user@host \
+  --server-url https://lgrep.example.com
+```
+
+What this does:
+
+- installs the published `lgrep` package on the remote host
+- installs Linux build/runtime prerequisites if the host is missing them
+- writes a start script under `~/.lgrep-server/<service-name>/`
+- provisions `launchd` on macOS, a working `systemd` service when available, or a `tmux` fallback on minimal/container-style Linux hosts
+- creates a remote token-store JSON file for hosted auth
+- configures this machine globally for Claude, Codex, and MCP unless you pass `--skip-local-install`
+
+If you only want the remote host provisioned and do not want local machine changes:
+
+```bash
+lgrep server install-remote user@host \
+  --server-url https://lgrep.example.com \
+  --skip-local-install
+```
 
 ## One-command bootstrap
 
@@ -79,7 +113,7 @@ The branch part is optional:
 name|/absolute/path/to/worktree
 ```
 
-## Server setup
+## Manual server setup
 
 The server host needs the same Postgres-backed configuration used for BYO cloud mode:
 
@@ -153,15 +187,25 @@ The server will accept:
 - the legacy single token from `LGREP_SERVER_AUTH_TOKEN`, if set
 - any scoped token stored in the local token store
 
-For remote deployments like Railway, the service-wide `LGREP_SERVER_AUTH_TOKEN` is the supported auth path today. The scoped token file is local to the machine where you ran `lgrep server token create`.
+For remote deployments like Railway, the service-wide `LGREP_SERVER_AUTH_TOKEN` is the supported auth path today. The scoped token file is local to the machine where you ran `lgrep server token create` unless you explicitly copy and manage that token store on the server.
 
 ## Client setup
 
-On any client machine or agent host, point lgrep at the shared service and use the created token:
+If you used `lgrep server install-remote` without `--skip-local-install`, this machine is already configured. The hosted URL and token are stored in the active lgrep profile, and the global Claude/Codex/MCP files are updated.
+
+For any other client machine or agent host, point lgrep at the shared service and use the created token:
 
 ```bash
 export LGREP_SERVER_URL="https://lgrep.example.com"
 export LGREP_SERVER_AUTH_TOKEN="paste-the-service-token"
+```
+
+You can also persist the same settings directly into the active profile on that machine:
+
+```bash
+lgrep install --target all --global \
+  --server-url https://lgrep.example.com \
+  --server-auth-token paste-the-service-token
 ```
 
 Discover the hosted project and its worktrees:
@@ -213,10 +257,12 @@ export LGREP_SERVER_AUTH_TOKEN="paste-the-service-token"
 Then install the MCP integration:
 
 ```bash
-lgrep install --target mcp
+lgrep install --target mcp --global \
+  --server-url https://lgrep.example.com \
+  --server-auth-token paste-the-service-token
 ```
 
-If `LGREP_SERVER_URL` and `LGREP_SERVER_AUTH_TOKEN` are set when you run that install command, they are written into the generated MCP config so Claude/Codex can use the hosted project without direct database access.
+That writes the hosted settings into the MCP config so Claude/Codex can use the hosted project without direct database access.
 
 ## Railway deployment
 
@@ -248,7 +294,7 @@ export LGREP_DATABASE_URL="postgres://..."
 lgrep server bootstrap /path/to/repo --project repo-main --branch main
 ```
 
-Today, Railway should use the shared `LGREP_SERVER_AUTH_TOKEN` secret for clients and agents. The scoped token file created by `lgrep server token create` is local to the machine that created it unless you also mount and manage a shared token-store file on the service.
+Today, Railway should use the shared `LGREP_SERVER_AUTH_TOKEN` secret for clients and agents. The scoped token file created by `lgrep server token create` is local to the machine that created it unless you also mount and manage a shared token-store file on the service. For SSH-managed self-hosting, prefer `lgrep server install-remote`, which provisions that token store on the remote host for you.
 
 ## Health and operations
 
@@ -304,8 +350,9 @@ For now, the most practical setup is:
 
 1. Use managed Postgres with `pgvector`.
 2. Create one `project` per repo and one `worktree` per branch or checkout you want searchable.
-3. Mint one scoped server token per agent or team workflow with `lgrep server token create`.
-4. Run `lgrep server start` behind a private network or reverse proxy.
-5. Give agents only `LGREP_SERVER_URL` and their scoped `LGREP_SERVER_AUTH_TOKEN`, not database credentials.
+3. For self-hosted deployments, provision the host with `lgrep server install-remote` so the token store lives on the server itself.
+4. For manual or colocated deployments, mint one scoped server token per agent or team workflow with `lgrep server token create`.
+5. Run `lgrep server start` behind a private network or reverse proxy.
+6. Give agents only `LGREP_SERVER_URL` and their scoped `LGREP_SERVER_AUTH_TOKEN`, not database credentials.
 
 That keeps the read/query path closer to the eventual hosted product while leaving write/index flows on the existing BYO Postgres path.

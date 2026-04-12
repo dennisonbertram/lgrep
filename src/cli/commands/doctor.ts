@@ -8,6 +8,8 @@ import { getConfigPath, getLgrepHome } from '../utils/paths.js';
 import { loadConfig } from '../../storage/config.js';
 import { DaemonManager } from '../../daemon/manager.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
+import { getServerUrl, isServerRunning } from '../../server/client.js';
+import { getClientServerAuthToken } from '../../server/auth.js';
 import {
   DEFAULT_PROFILE_NAME,
   getActiveProfileName,
@@ -332,6 +334,15 @@ async function checkRemoteCache(): Promise<CheckResult | null> {
 
 async function checkIndexes(): Promise<CheckResult> {
   const config = await loadConfig();
+  const serverUrl = getServerUrl();
+
+  if (serverUrl) {
+    return {
+      name: 'Indexes',
+      status: 'ok',
+      message: `Hosted reads are configured through ${serverUrl}`,
+    };
+  }
 
   try {
     const db = await openConfiguredDatabase();
@@ -494,33 +505,77 @@ function checkClaudeIntegration(): CheckResult {
 
 function checkCodexIntegration(targetPath: string): CheckResult {
   const agentsPath = findNearestFile(targetPath, 'AGENTS.md');
-  if (!agentsPath) {
+  const globalAgentsPath = join(process.env['HOME'] || '', '.codex', 'AGENTS.md');
+  const candidates = [agentsPath, existsSync(globalAgentsPath) ? globalAgentsPath : null].filter(
+    (candidate): candidate is string => Boolean(candidate)
+  );
+
+  if (candidates.length === 0) {
     return {
       name: 'Codex integration',
       status: 'warn',
-      message: 'No AGENTS.md found for this project',
-      fix: 'Run: lgrep install --target codex',
+      message: 'No AGENTS.md found for this project or in ~/.codex',
+      fix: 'Run: lgrep install --target codex --global',
     };
   }
 
-  try {
-    const content = readFileSync(agentsPath, 'utf-8');
-    if (content.includes(LGREP_SECTION_MARKER) || content.includes('## lgrep') || content.includes('# lgrep')) {
-      return {
-        name: 'Codex integration',
-        status: 'ok',
-        message: `Project guidance installed at ${agentsPath}`,
-      };
+  for (const candidate of candidates) {
+    try {
+      const content = readFileSync(candidate, 'utf-8');
+      if (content.includes(LGREP_SECTION_MARKER) || content.includes('## lgrep') || content.includes('# lgrep')) {
+        return {
+          name: 'Codex integration',
+          status: 'ok',
+          message: candidate === globalAgentsPath
+            ? `Global guidance installed at ${candidate}`
+            : `Project guidance installed at ${candidate}`,
+        };
+      }
+    } catch {
+      // Ignore read failures and continue to the next candidate.
     }
-  } catch {
-    // Ignore read failures and fall through.
   }
 
   return {
     name: 'Codex integration',
     status: 'warn',
-    message: `AGENTS.md found at ${agentsPath}, but lgrep guidance is missing`,
-    fix: 'Run: lgrep install --target codex',
+    message: agentsPath
+      ? `AGENTS.md found at ${agentsPath}, but lgrep guidance is missing`
+      : `Global AGENTS.md found at ${globalAgentsPath}, but lgrep guidance is missing`,
+    fix: 'Run: lgrep install --target codex --global',
+  };
+}
+
+async function checkHostedClient(): Promise<CheckResult | null> {
+  const serverUrl = getServerUrl();
+  if (!serverUrl) {
+    return null;
+  }
+
+  const token = getClientServerAuthToken();
+  if (!token) {
+    return {
+      name: 'Hosted query client',
+      status: 'warn',
+      message: `Hosted server configured at ${serverUrl}, but no bearer token is available`,
+      fix: 'Run: lgrep install --global --server-url <url> --server-auth-token <token>',
+    };
+  }
+
+  const reachable = await isServerRunning(serverUrl);
+  if (!reachable) {
+    return {
+      name: 'Hosted query client',
+      status: 'error',
+      message: `Configured for ${serverUrl}, but the hosted server is unreachable`,
+      fix: 'Verify the remote service is running and the URL is correct',
+    };
+  }
+
+  return {
+    name: 'Hosted query client',
+    status: 'ok',
+    message: `Configured for ${serverUrl}`,
   };
 }
 
@@ -594,6 +649,11 @@ export async function runDoctorCommand(options: DoctorOptions = {}): Promise<Doc
   const cloudDatabaseCheck = await checkCloudDatabase();
   if (cloudDatabaseCheck) {
     checks.push(cloudDatabaseCheck);
+  }
+
+  const hostedClientCheck = await checkHostedClient();
+  if (hostedClientCheck) {
+    checks.push(hostedClientCheck);
   }
 
   const remoteCacheCheck = await checkRemoteCache();

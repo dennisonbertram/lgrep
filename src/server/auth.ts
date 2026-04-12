@@ -3,6 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { dirname } from 'node:path';
 import { getServerTokensPath } from '../cli/utils/paths.js';
+import { loadConfigSync } from '../storage/config.js';
 
 export const DEFAULT_SERVER_AUTH_TOKEN_ENV = 'LGREP_SERVER_AUTH_TOKEN';
 export const DEFAULT_SERVER_TOKENS_FILE_ENV = 'LGREP_SERVER_TOKENS_FILE';
@@ -100,9 +101,19 @@ function writeStoredTokensFile(path: string, data: StoredServerTokensFile): void
   writeFileSync(path, JSON.stringify(data, null, 2), 'utf-8');
 }
 
-export function getServerAuthToken(env: NodeJS.ProcessEnv = process.env): string | null {
+export function getServerAuthTokenFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
   const token = env[DEFAULT_SERVER_AUTH_TOKEN_ENV]?.trim();
   return token ? token : null;
+}
+
+export function getClientServerAuthToken(env: NodeJS.ProcessEnv = process.env): string | null {
+  const envToken = getServerAuthTokenFromEnv(env);
+  if (envToken) {
+    return envToken;
+  }
+
+  const configToken = loadConfigSync().serverAuthToken.trim();
+  return configToken || null;
 }
 
 export function getBearerToken(req: IncomingMessage): string | null {
@@ -116,7 +127,7 @@ export function getBearerToken(req: IncomingMessage): string | null {
 }
 
 export function loadServerAuthConfig(env: NodeJS.ProcessEnv = process.env): ServerAuthConfig {
-  const legacyToken = getServerAuthToken(env);
+  const legacyToken = getServerAuthTokenFromEnv(env);
   const tokenStorePath = getTokenStorePath(env);
   const storedTokens = readStoredTokensFile(tokenStorePath).tokens;
 
@@ -253,9 +264,7 @@ export interface CreateServerTokenResult {
   path: string;
 }
 
-export function createServerToken(options: CreateServerTokenOptions): CreateServerTokenResult {
-  const path = options.path ?? getTokenStorePath();
-  const existing = readStoredTokensFile(path);
+export function createServerTokenRecord(options: Omit<CreateServerTokenOptions, 'path'>): Omit<CreateServerTokenResult, 'path'> {
   const token = randomBytes(24).toString('base64url');
   const now = new Date().toISOString();
 
@@ -267,6 +276,14 @@ export function createServerToken(options: CreateServerTokenOptions): CreateServ
     worktrees: normalizeScopeValues(options.worktrees),
     createdAt: now,
   };
+
+  return { token, storedToken };
+}
+
+export function createServerToken(options: CreateServerTokenOptions): CreateServerTokenResult {
+  const path = options.path ?? getTokenStorePath();
+  const existing = readStoredTokensFile(path);
+  const { token, storedToken } = createServerTokenRecord(options);
 
   existing.tokens.push(storedToken);
   writeStoredTokensFile(path, existing);

@@ -1,7 +1,7 @@
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { ensureSchema } from '../../storage/migrations.js';
 import { startQueryServer } from '../../server/query-server.js';
-import { isServerRunning, getServerHealth } from '../../server/client.js';
+import { isServerRunning, getServerHealth, getServerUrl } from '../../server/client.js';
 import { DEFAULT_SERVER_AUTH_TOKEN_ENV, loadServerAuthConfig } from '../../server/auth.js';
 import { requirePostgresPool } from '../../storage/postgres.js';
 
@@ -73,7 +73,7 @@ export async function runServerStatusCommand(opts: {
   json?: boolean;
 }): Promise<unknown> {
   const port = opts.port ?? DEFAULT_PORT;
-  const url = process.env['LGREP_SERVER_URL'] ?? `http://localhost:${port}`;
+  const url = getServerUrl() ?? `http://localhost:${port}`;
 
   const running = await isServerRunning(url);
   if (!running) {

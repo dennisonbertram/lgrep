@@ -495,6 +495,27 @@ describe('install command', () => {
       expect(writeCall).toBeDefined();
       expect(writeCall![1]).toContain('## lgrep');
     });
+
+    it('should install global Codex guidance when --global is used', async () => {
+      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+      const result = await runInstallCommand({
+        target: 'codex',
+        global: true,
+        json: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.codexUserUpdated).toBe(true);
+      expect(result.codexProjectUpdated).toBe(false);
+
+      const writeCall = vi.mocked(fs.writeFile).mock.calls.find(
+        (call) => call[0].toString().includes(path.join('.codex', 'AGENTS.md'))
+      );
+      expect(writeCall).toBeDefined();
+      expect(writeCall![1]).toContain('## lgrep');
+    });
   });
 
   describe('JSON output', () => {
