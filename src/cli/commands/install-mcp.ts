@@ -21,6 +21,17 @@ export interface InstallMcpResult {
   error?: string;
 }
 
+function getHostedMcpEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of ['LGREP_SERVER_URL', 'LGREP_SERVER_AUTH_TOKEN', 'LGREP_PROFILE']) {
+    const value = process.env[key]?.trim();
+    if (value) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
 /**
  * Get the lgrep MCP server path.
  */
@@ -81,7 +92,7 @@ export async function runInstallMcpCommand(
     mcpServers.lgrep = {
       command: 'node',
       args: [mcpServerPath],
-      env: {},
+      env: getHostedMcpEnv(),
     };
 
     // Write updated settings

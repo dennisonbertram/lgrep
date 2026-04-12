@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["nodejs_22", "bash"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "bash ./scripts/start-hosted-server.sh"

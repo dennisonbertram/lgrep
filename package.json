@@ -25,6 +25,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "start": "bash ./scripts/start-hosted-server.sh",
     "build": "tsup && npm run build:viewer",
     "dev": "tsup --watch",
     "build:viewer": "vite build --config viewer/vite.config.ts",

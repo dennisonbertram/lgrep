@@ -76,6 +76,8 @@ describe('MCP handlers', () => {
     const response = await handleSearch({
       query: 'find auth middleware',
       index: 'remote-index',
+      project: 'repo-main',
+      worktree: 'feature-login',
       limit: 5,
       diversity: 0.4,
       definition: 'authenticate',
@@ -83,6 +85,8 @@ describe('MCP handlers', () => {
 
     expect(mocks.runSearchCommand).toHaveBeenCalledWith('find auth middleware', {
       index: 'remote-index',
+      project: 'repo-main',
+      worktree: 'feature-login',
       limit: 5,
       diversity: 0.4,
       usages: undefined,
@@ -104,6 +108,32 @@ describe('MCP handlers', () => {
         ),
       },
     ]);
+  });
+
+  it('routes hosted callers through the same CLI layer', async () => {
+    mocks.runCallersCommand.mockResolvedValue({
+      success: true,
+      callers: [{ file: 'feature-login:src/app.ts', line: 10 }],
+      count: 1,
+    });
+
+    const response = await handleToolCall('lgrep_callers', {
+      symbol: 'createSession',
+      project: 'repo-main',
+      worktree: 'feature-login',
+    });
+
+    expect(mocks.runCallersCommand).toHaveBeenCalledWith('createSession', {
+      index: undefined,
+      project: 'repo-main',
+      worktree: 'feature-login',
+      json: true,
+      showProgress: false,
+    });
+    expect(JSON.parse(response[0]!.text)).toMatchObject({
+      success: true,
+      count: 1,
+    });
   });
 
   it('routes stats through the same storage-backed command layer', async () => {

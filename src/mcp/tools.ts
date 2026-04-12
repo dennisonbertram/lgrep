@@ -35,6 +35,14 @@ export const LGREP_TOOLS: ToolDefinition[] = [
           type: 'string',
           description: 'Index name (auto-detected from current directory if not provided)',
         },
+        project: {
+          type: 'string',
+          description: 'Hosted project name for remote queries',
+        },
+        worktree: {
+          type: 'string',
+          description: 'Hosted worktree name for remote queries',
+        },
         limit: {
           type: 'number',
           description: 'Maximum results to return',
@@ -74,6 +82,14 @@ export const LGREP_TOOLS: ToolDefinition[] = [
           type: 'string',
           description: 'Index name (auto-detected from current directory if not provided)',
         },
+        project: {
+          type: 'string',
+          description: 'Hosted project name for remote queries',
+        },
+        worktree: {
+          type: 'string',
+          description: 'Hosted worktree name for remote queries',
+        },
       },
       required: ['symbol'],
     },
@@ -91,6 +107,14 @@ export const LGREP_TOOLS: ToolDefinition[] = [
         index: {
           type: 'string',
           description: 'Index name (auto-detected from current directory if not provided)',
+        },
+        project: {
+          type: 'string',
+          description: 'Hosted project name for remote queries',
+        },
+        worktree: {
+          type: 'string',
+          description: 'Hosted worktree name for remote queries',
         },
       },
       required: ['symbol'],
@@ -226,6 +250,14 @@ export const LGREP_TOOLS: ToolDefinition[] = [
         index: {
           type: 'string',
           description: 'Index name (auto-detected from current directory if not provided)',
+        },
+        project: {
+          type: 'string',
+          description: 'Hosted project name for remote queries',
+        },
+        worktree: {
+          type: 'string',
+          description: 'Hosted worktree name for remote queries',
         },
         limit: {
           type: 'number',

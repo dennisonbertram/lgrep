@@ -3,12 +3,16 @@ import { getCalls, searchSymbols, getSymbols } from '../../storage/code-intel.js
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { createSpinner } from '../utils/progress.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
+import { getServerUrl, queryServer } from '../../server/client.js';
+import type { QueryCallersResponse } from '../../server/query-server.js';
 
 /**
  * Options for the callers command.
  */
 export interface CallersOptions {
   index?: string;
+  project?: string;
+  worktree?: string;
   showProgress?: boolean;
   json?: boolean;
 }
@@ -21,6 +25,7 @@ export interface Caller {
   line: number;
   callerName?: string;
   callerKind?: string;
+  worktreeName?: string;
 }
 
 /**
@@ -53,6 +58,23 @@ export async function runCallersCommand(
 
   try {
     spinner?.start();
+
+    if (getServerUrl() && !options.index && (options.project || options.worktree)) {
+      const response = await queryServer({
+        method: 'callers',
+        project: options.project,
+        worktree: options.worktree,
+        params: { symbol },
+      }) as QueryCallersResponse;
+
+      return {
+        success: true,
+        symbol,
+        indexName: options.worktree ?? options.project ?? 'hosted',
+        callers: response.callers,
+        count: response.count,
+      };
+    }
 
     // Auto-detect index if not provided
     let indexName: string;

@@ -203,4 +203,16 @@ describe('server bootstrap command', () => {
     expect(result.mainWorktree.action).toBe('updated');
     expect(result.additionalWorktrees[0]?.action).toBe('updated');
   });
+
+  it('adds a hosted-token note for remote server URLs', async () => {
+    const result = await runServerBootstrapCommand({
+      path: '/repos/repo-main',
+      project: 'repo-main',
+      serverUrl: 'https://lgrep.example.com',
+    });
+
+    expect(result.notes).toContain(
+      'Scoped tokens are stored in /tmp/server-tokens.json. Remote deployments like Railway still authenticate with LGREP_SERVER_AUTH_TOKEN until DB-backed hosted token storage ships.'
+    );
+  });
 });

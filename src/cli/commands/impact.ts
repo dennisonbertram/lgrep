@@ -3,12 +3,16 @@ import { getCalls, searchSymbols, getDependencies, getSymbols } from '../../stor
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { createSpinner } from '../utils/progress.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
+import { getServerUrl, queryServer } from '../../server/client.js';
+import type { QueryImpactResponse } from '../../server/query-server.js';
 
 /**
  * Options for the impact command.
  */
 export interface ImpactOptions {
   index?: string;
+  project?: string;
+  worktree?: string;
   showProgress?: boolean;
   json?: boolean;
 }
@@ -21,6 +25,7 @@ export interface DirectCaller {
   line: number;
   callerName?: string;
   callerKind?: string;
+  worktreeName?: string;
 }
 
 /**
@@ -54,6 +59,24 @@ export async function runImpactCommand(
 
   try {
     spinner?.start();
+
+    if (getServerUrl() && !options.index && (options.project || options.worktree)) {
+      const response = await queryServer({
+        method: 'impact',
+        project: options.project,
+        worktree: options.worktree,
+        params: { symbol },
+      }) as QueryImpactResponse;
+
+      return {
+        success: true,
+        symbol,
+        indexName: options.worktree ?? options.project ?? 'hosted',
+        directCallers: response.directCallers,
+        transitiveFiles: response.transitiveFiles,
+        totalFiles: response.totalFiles,
+      };
+    }
 
     // Auto-detect index if not provided
     let indexName: string;

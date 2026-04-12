@@ -836,6 +836,8 @@ program
   .command('context <task>')
   .description('Build context for a task (for LLM consumption)')
   .option('-i, --index <name>', 'Index to search (auto-detected from current directory if not specified)')
+  .option('-p, --project <name>', 'Hosted project to query')
+  .option('--worktree <name>', 'Hosted worktree to query (use with --project or by name)')
   .option('-l, --limit <n>', 'Max files to include', '15')
   .option('--max-tokens <n>', 'Token budget', '32000')
   .option('--depth <n>', 'Graph traversal depth', '2')
@@ -845,6 +847,8 @@ program
   .option('-j, --json', 'JSON output (same as --format json)')
   .action(async (task: string, options: {
     index?: string;
+    project?: string;
+    worktree?: string;
     limit?: string;
     maxTokens?: string;
     depth?: string;
@@ -856,6 +860,8 @@ program
     try {
       const result = await runContextCommand(task, {
         index: options.index,
+        project: options.project,
+        worktree: options.worktree,
         limit: options.limit ? parseInt(options.limit, 10) : undefined,
         maxTokens: options.maxTokens ? parseInt(options.maxTokens, 10) : undefined,
         depth: options.depth ? parseInt(options.depth, 10) : undefined,
@@ -941,11 +947,15 @@ program
   .command('callers <symbol>')
   .description('Show all locations that call a given function/method')
   .option('-i, --index <name>', 'Index to search (auto-detected from current directory if not specified)')
+  .option('-p, --project <name>', 'Hosted project to query')
+  .option('--worktree <name>', 'Hosted worktree to query (use with --project or by name)')
   .option('-j, --json', 'Output as JSON')
-  .action(async (symbol: string, options: { index?: string; json?: boolean }) => {
+  .action(async (symbol: string, options: { index?: string; project?: string; worktree?: string; json?: boolean }) => {
     try {
       const result = await runCallersCommand(symbol, {
         index: options.index,
+        project: options.project,
+        worktree: options.worktree,
         json: options.json,
       });
 
@@ -1019,11 +1029,15 @@ program
   .command('impact <symbol>')
   .description('Show the blast radius if you change a function (direct callers + transitive impact)')
   .option('-i, --index <name>', 'Index to search (auto-detected from current directory if not specified)')
+  .option('-p, --project <name>', 'Hosted project to query')
+  .option('--worktree <name>', 'Hosted worktree to query (use with --project or by name)')
   .option('-j, --json', 'Output as JSON')
-  .action(async (symbol: string, options: { index?: string; json?: boolean }) => {
+  .action(async (symbol: string, options: { index?: string; project?: string; worktree?: string; json?: boolean }) => {
     try {
       const result = await runImpactCommand(symbol, {
         index: options.index,
+        project: options.project,
+        worktree: options.worktree,
         json: options.json,
       });
 
@@ -2503,6 +2517,12 @@ serverCmd
       console.log('\nExample commands');
       for (const command of result.client.exampleCommands) {
         console.log(`  ${command}`);
+      }
+      if (result.notes.length > 0) {
+        console.log('\nNotes');
+        for (const note of result.notes) {
+          console.log(`  - ${note}`);
+        }
       }
       console.log('');
     } catch (err) {

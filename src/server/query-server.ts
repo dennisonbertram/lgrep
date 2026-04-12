@@ -33,9 +33,16 @@ import {
   type Project,
   type ProjectStats,
 } from '../storage/project.js';
+import {
+  buildHostedContext,
+  queryHostedCallers,
+  queryHostedImpact,
+  type HostedCallerRecord,
+} from './query-reads.js';
+import type { ContextPackage } from '../types/context.js';
 
 export interface QueryRequest {
-  method: 'search' | 'worktrees' | 'projects' | 'project-info' | 'diff' | 'health';
+  method: 'search' | 'worktrees' | 'projects' | 'project-info' | 'diff' | 'health' | 'callers' | 'impact' | 'context';
   project?: string;
   worktree?: string;
   params: Record<string, unknown>;
@@ -106,6 +113,28 @@ export interface QueryDiffResponse {
   count: number;
 }
 
+export interface QueryCallersResponse {
+  symbol: string;
+  project?: string;
+  worktree?: string;
+  callers: HostedCallerRecord[];
+  count: number;
+}
+
+export interface QueryImpactResponse {
+  symbol: string;
+  project?: string;
+  worktree?: string;
+  directCallers: HostedCallerRecord[];
+  transitiveFiles: string[];
+  totalFiles: number;
+}
+
+export interface QueryContextResponse extends ContextPackage {
+  project?: string;
+  worktree?: string;
+}
+
 interface ServerState {
   db: IndexDatabase;
   startedAt: Date;
@@ -146,6 +175,70 @@ function forbiddenResponse(res: ServerResponse): void {
   });
 }
 
+async function resolveScopedRequestTarget(
+  db: IndexDatabase,
+  scope: ServerAccessScope,
+  request: QueryRequest,
+  res: ServerResponse,
+): Promise<{ project?: Project; worktree?: Worktree } | null> {
+  await ensureWorktreeTables(db);
+
+  if (request.project) {
+    await ensureProjectTables(db);
+    const project = await getProject(db, request.project);
+    if (!project) {
+      jsonResponse(res, 404, { error: `Project "${request.project}" not found` });
+      return null;
+    }
+    if (!scopeAllowsProject(scope, project.id, project.name)) {
+      forbiddenResponse(res);
+      return null;
+    }
+
+    if (request.worktree) {
+      const worktree = await getWorktree(db, request.worktree, { projectId: project.id });
+      if (!worktree) {
+        jsonResponse(res, 404, { error: `Worktree "${request.worktree}" not found in project "${project.name}"` });
+        return null;
+      }
+      if (!scopeAllowsWorktree(scope, worktree.id, worktree.name)) {
+        forbiddenResponse(res);
+        return null;
+      }
+      return { project, worktree };
+    }
+
+    return { project };
+  }
+
+  if (request.worktree) {
+    const worktree = await getWorktree(db, request.worktree);
+    if (!worktree) {
+      jsonResponse(res, 404, { error: `Worktree "${request.worktree}" not found` });
+      return null;
+    }
+
+    let project: Project | undefined;
+    if (worktree.projectId) {
+      await ensureProjectTables(db);
+      const foundProject = await getProject(db, worktree.projectId);
+      if (foundProject) {
+        project = foundProject;
+      }
+    }
+
+    if (!scopeAllowsWorktree(scope, worktree.id, worktree.name) || !scopeAllowsProject(scope, worktree.projectId, project?.name ?? null)) {
+      forbiddenResponse(res);
+      return null;
+    }
+
+    return { project, worktree };
+  }
+
+  jsonResponse(res, 400, { error: 'Either --project or --worktree is required for hosted queries' });
+  return null;
+}
+
 async function handleSearch(
   db: IndexDatabase,
   scope: ServerAccessScope,
@@ -161,34 +254,15 @@ async function handleSearch(
     return;
   }
 
-  await ensureWorktreeTables(db);
+  const target = await resolveScopedRequestTarget(db, scope, request, res);
+  if (!target) {
+    return;
+  }
 
   // Project-scoped search
-  if (request.project) {
-    await ensureProjectTables(db);
-    const proj = await getProject(db, request.project);
-    if (!proj) {
-      jsonResponse(res, 404, { error: `Project "${request.project}" not found` });
-      return;
-    }
-    if (!scopeAllowsProject(scope, proj.id, proj.name)) {
-      forbiddenResponse(res);
-      return;
-    }
-
-    let worktreeId: string | undefined;
-    if (request.worktree) {
-      const wt = await getWorktree(db, request.worktree, { projectId: proj.id });
-      if (!wt) {
-        jsonResponse(res, 404, { error: `Worktree "${request.worktree}" not found in project "${proj.name}"` });
-        return;
-      }
-      if (!scopeAllowsWorktree(scope, wt.id, wt.name)) {
-        forbiddenResponse(res);
-        return;
-      }
-      worktreeId = wt.id;
-    }
+  if (target.project) {
+    const proj = target.project;
+    const worktreeId = target.worktree?.id;
 
     const embedClient = createEmbeddingClient({ model: proj.model });
     const queryResult = await embedClient.embed(query);
@@ -222,22 +296,8 @@ async function handleSearch(
   }
 
   // Single worktree search
-  if (request.worktree) {
-    const wt = await getWorktree(db, request.worktree);
-    if (!wt) {
-      jsonResponse(res, 404, { error: `Worktree "${request.worktree}" not found` });
-      return;
-    }
-    let worktreeProjectName: string | null = null;
-    if (wt.projectId) {
-      await ensureProjectTables(db);
-      const project = await getProject(db, wt.projectId);
-      worktreeProjectName = project?.name ?? null;
-    }
-    if (!scopeAllowsWorktree(scope, wt.id, wt.name) || !scopeAllowsProject(scope, wt.projectId, worktreeProjectName)) {
-      forbiddenResponse(res);
-      return;
-    }
+  if (target.worktree) {
+    const wt = target.worktree;
 
     const embedClient = createEmbeddingClient({ model: wt.model });
     const queryResult = await embedClient.embed(query);
@@ -270,6 +330,109 @@ async function handleSearch(
   }
 
   jsonResponse(res, 400, { error: 'Either --project or --worktree is required for server search' });
+}
+
+async function handleCallers(
+  db: IndexDatabase,
+  scope: ServerAccessScope,
+  request: QueryRequest,
+  res: ServerResponse,
+): Promise<void> {
+  const symbol = String(request.params['symbol'] ?? '').trim();
+  if (!symbol) {
+    jsonResponse(res, 400, { error: 'symbol parameter is required' });
+    return;
+  }
+
+  const target = await resolveScopedRequestTarget(db, scope, request, res);
+  if (!target) {
+    return;
+  }
+
+  const result = await queryHostedCallers(db, {
+    symbol,
+    project: target.project,
+    worktree: target.worktree,
+  });
+
+  const response: QueryCallersResponse = {
+    symbol,
+    project: target.project?.name,
+    worktree: target.worktree?.name,
+    callers: result.callers,
+    count: result.count,
+  };
+  jsonResponse(res, 200, response);
+}
+
+async function handleImpact(
+  db: IndexDatabase,
+  scope: ServerAccessScope,
+  request: QueryRequest,
+  res: ServerResponse,
+): Promise<void> {
+  const symbol = String(request.params['symbol'] ?? '').trim();
+  if (!symbol) {
+    jsonResponse(res, 400, { error: 'symbol parameter is required' });
+    return;
+  }
+
+  const target = await resolveScopedRequestTarget(db, scope, request, res);
+  if (!target) {
+    return;
+  }
+
+  const result = await queryHostedImpact(db, {
+    symbol,
+    project: target.project,
+    worktree: target.worktree,
+  });
+
+  const response: QueryImpactResponse = {
+    symbol,
+    project: target.project?.name,
+    worktree: target.worktree?.name,
+    directCallers: result.directCallers,
+    transitiveFiles: result.transitiveFiles,
+    totalFiles: result.totalFiles,
+  };
+  jsonResponse(res, 200, response);
+}
+
+async function handleContext(
+  db: IndexDatabase,
+  scope: ServerAccessScope,
+  request: QueryRequest,
+  res: ServerResponse,
+): Promise<void> {
+  const task = String(request.params['task'] ?? '').trim();
+  if (!task) {
+    jsonResponse(res, 400, { error: 'task parameter is required' });
+    return;
+  }
+
+  const target = await resolveScopedRequestTarget(db, scope, request, res);
+  if (!target) {
+    return;
+  }
+
+  const context = await buildHostedContext(db, {
+    task,
+    project: target.project,
+    worktree: target.worktree,
+    limit: request.params['limit'] as number | undefined,
+    maxTokens: request.params['maxTokens'] as number | undefined,
+    depth: request.params['depth'] as number | undefined,
+    summaryOnly: request.params['summaryOnly'] as boolean | undefined,
+    noApproach: request.params['noApproach'] as boolean | undefined,
+  });
+
+  const response: QueryContextResponse = {
+    ...context,
+    project: target.project?.name,
+    worktree: target.worktree?.name,
+  };
+  jsonResponse(res, 200, response);
 }
 
 async function handleHealth(db: IndexDatabase, auth: ServerAuthConfig, res: ServerResponse): Promise<void> {
@@ -378,6 +541,15 @@ async function handleRequest(
     switch (request.method) {
       case 'search':
         await handleSearch(db, scope, request, res);
+        return;
+      case 'callers':
+        await handleCallers(db, scope, request, res);
+        return;
+      case 'impact':
+        await handleImpact(db, scope, request, res);
+        return;
+      case 'context':
+        await handleContext(db, scope, request, res);
         return;
       case 'health':
         await handleHealth(db, auth, res);
