@@ -30,7 +30,14 @@ Prefer `source ./init.sh` over `./init.sh`. If you execute it directly, it will 
 
 ## lgrep - Local Semantic Code Search
 
-**Use lgrep for code exploration and context building.**
+**Use lgrep first for code exploration, context building, symbol lookup, callers, impact, and semantic search.**
+
+### Hard Rule
+
+- Prefer `lgrep` over `grep`, `rg`, or manual file-by-file inspection whenever you are trying to understand the codebase.
+- Only reach for `rg` or `grep` first when you already know the exact literal string, filename, or regex you need.
+- If a hosted `lgrep` server is configured, assume it is the default source of truth for project/worktree-aware reads unless you explicitly need a local-only index.
+- When working inside a git worktree, let `lgrep` auto-detect the hosted project/worktree first before adding manual `--project` or `--worktree` flags.
 
 ### When to Use
 
@@ -144,6 +151,7 @@ lgrep config set summarizationModel "groq:llama-3.1-8b-instant"
 5. **Adjust search diversity** - Use `--diversity` to balance variety vs precision
 6. **JSON output** - Use `--json` for programmatic processing
 7. **Use external providers** - Set API keys for 10-100x faster indexing
+8. **Stay semantic by default** - start with `lgrep`; use `rg` only when you need exact-text confirmation
 
 ### Configuration
 

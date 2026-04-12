@@ -4,6 +4,7 @@ import { loadConfig } from '../../storage/config.js';
 import { getIndex } from '../../storage/lance.js';
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
+import { detectHostedScopeForDirectory } from '../utils/hosted-auto-detect.js';
 import type { ContextPackage } from '../../types/context.js';
 import { getServerUrl, queryServer } from '../../server/client.js';
 import type { QueryContextResponse } from '../../server/query-server.js';
@@ -37,11 +38,18 @@ export async function runContextCommand(
     throw new Error('Task description is required');
   }
 
-  if (getServerUrl() && !options.index && (options.project || options.worktree)) {
+  const hostedScope = getServerUrl() && !options.index && !options.project && !options.worktree
+    ? await detectHostedScopeForDirectory()
+    : null;
+
+  if (getServerUrl() && !options.index && (options.project || options.worktree || hostedScope)) {
+    const project = options.project ?? hostedScope?.project;
+    const worktree = options.worktree ?? hostedScope?.worktree;
+
     const response = await queryServer({
       method: 'context',
-      project: options.project,
-      worktree: options.worktree,
+      project,
+      worktree,
       params: {
         task,
         limit: options.limit,

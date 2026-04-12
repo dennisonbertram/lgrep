@@ -12,6 +12,7 @@ import { getCalls, searchSymbols, getSymbols } from '../../storage/code-intel.js
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { createSpinner } from '../utils/progress.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
+import { detectHostedScopeForDirectory } from '../utils/hosted-auto-detect.js';
 import {
   ensureWorktreeTables,
   getWorktree,
@@ -103,14 +104,13 @@ export interface SearchCommandResult {
   error?: string;
 }
 
-function shouldUseHostedSearch(options: SearchOptions): boolean {
+function canUseHostedSearch(options: SearchOptions): boolean {
   return Boolean(
     getServerUrl() &&
     !options.index &&
     !options.usages &&
     !options.definition &&
-    !options.type &&
-    (options.project || options.worktree)
+    !options.type
   );
 }
 
@@ -140,13 +140,28 @@ export async function runSearchCommand(
       throw new Error('Diversity parameter must be between 0.0 and 1.0');
     }
 
-    if (shouldUseHostedSearch(options)) {
+    const hostedScope = canUseHostedSearch(options) && !options.project && !options.worktree
+      ? await detectHostedScopeForDirectory()
+      : null;
+
+    if (canUseHostedSearch(options) && (options.project || options.worktree || hostedScope)) {
+      const project = options.project ?? hostedScope?.project;
+      const worktree = options.worktree ?? hostedScope?.worktree;
+      if (!project && !worktree) {
+        throw new Error(
+          'No hosted project/worktree match found for the current directory. Either:\n' +
+          '  1. Use --project <name> and optionally --worktree <name>\n' +
+          '  2. Run the command from a git worktree whose branch matches a hosted worktree\n' +
+          '  3. Use --index <name> to query a local index instead'
+        );
+      }
+
       spinner?.update('Querying hosted lgrep server...');
 
       const response = await queryServer({
         method: 'search',
-        project: options.project,
-        worktree: options.worktree,
+        project,
+        worktree,
         params: { query, limit, diversity },
       }) as QuerySearchResponse;
 
@@ -161,7 +176,7 @@ export async function runSearchCommand(
       return {
         success: true,
         query,
-        indexName: response.worktree ?? response.project ?? options.worktree ?? options.project ?? 'remote',
+        indexName: response.worktree ?? response.project ?? worktree ?? project ?? 'remote',
         results: response.results.map((result) => ({
           filePath: result.relativePath,
           relativePath: result.relativePath,

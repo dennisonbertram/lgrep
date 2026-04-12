@@ -3,6 +3,7 @@ import { getCalls, searchSymbols, getDependencies, getSymbols } from '../../stor
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { createSpinner } from '../utils/progress.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
+import { detectHostedScopeForDirectory } from '../utils/hosted-auto-detect.js';
 import { getServerUrl, queryServer } from '../../server/client.js';
 import type { QueryImpactResponse } from '../../server/query-server.js';
 
@@ -60,18 +61,25 @@ export async function runImpactCommand(
   try {
     spinner?.start();
 
-    if (getServerUrl() && !options.index && (options.project || options.worktree)) {
+    const hostedScope = getServerUrl() && !options.index && !options.project && !options.worktree
+      ? await detectHostedScopeForDirectory()
+      : null;
+
+    if (getServerUrl() && !options.index && (options.project || options.worktree || hostedScope)) {
+      const project = options.project ?? hostedScope?.project;
+      const worktree = options.worktree ?? hostedScope?.worktree;
+
       const response = await queryServer({
         method: 'impact',
-        project: options.project,
-        worktree: options.worktree,
+        project,
+        worktree,
         params: { symbol },
       }) as QueryImpactResponse;
 
       return {
         success: true,
         symbol,
-        indexName: options.worktree ?? options.project ?? 'hosted',
+        indexName: worktree ?? project ?? 'hosted',
         directCallers: response.directCallers,
         transitiveFiles: response.transitiveFiles,
         totalFiles: response.totalFiles,

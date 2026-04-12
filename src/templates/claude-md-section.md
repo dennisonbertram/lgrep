@@ -1,25 +1,31 @@
 ## lgrep - Semantic Code Search
 
-Use lgrep for code exploration, context building, and refactor analysis.
+Treat `lgrep` as the default entrypoint for understanding this codebase. Use it before `rg`, `grep`, or manual file-by-file exploration whenever you need discovery, context, callers, impact, definitions, usages, or semantic search.
 
-### When to Use It
+### Session Start
 
-- Search for implementation by meaning, not only by keywords
-- Find definitions, usages, callers, and impact
-- Build task-specific context before editing
-- Find dead code, unused exports, similar code, or cycles
+- Claude's `SessionStart` hook should prepare `lgrep` automatically.
+- In **local mode**, the hook can clean stale state and start a watcher for the current repo when that is useful.
+- In **cloud mode**, the hook should verify the hosted service is reachable and keep hosted reads as the default path.
+- If startup looks wrong, run `lgrep doctor` for setup/debugging.
 
-### Storage-Aware Guidance
+### Hard Rules
 
-- In **local mode**, `lgrep watch` can keep the current repo indexed.
-- In **cloud mode**, prefer the configured shared remote index and avoid starting local watchers unless the user asks for a local workflow.
+- Prefer `lgrep` before `rg` or `grep` unless you already know the exact literal string, filename, or regex you need.
+- Let hosted auto-detection choose the project/worktree first when you are inside a registered git worktree.
+- In **cloud mode**, do not start local watchers or rebuild local indexes unless the user explicitly asks for a local workflow.
 
-### Quick Commands
+### Session Workflow
 
 ```bash
+# Local mode / setup debugging
 lgrep doctor
-lgrep list
-lgrep search "user authentication"
+
+# Hosted mode / shared remote workflow
+lgrep project list
+
+# Then use lgrep first
+lgrep search "user authentication flow"
 lgrep search --definition "ClassName"
 lgrep search --usages "functionName"
 lgrep callers myFunction
@@ -30,8 +36,8 @@ lgrep intent "what calls awardBadge"
 
 ### Best Practices
 
-1. Run `lgrep doctor` before debugging setup problems.
-2. Use `lgrep intent` for natural-language repo questions.
-3. Use `lgrep context` before making cross-cutting code changes.
-4. In local mode, use watchers only when you want automatic reindexing.
-5. In cloud mode, assume the remote index is the source of truth.
+1. Start with `lgrep` and only fall back to `rg` for exact-text confirmation.
+2. Use `lgrep context` before broad code changes or multi-file edits.
+3. Use `lgrep callers` or `lgrep impact` before refactors and renames.
+4. In local mode, let the SessionStart hook or `lgrep watch` keep active repos fresh.
+5. In cloud mode, assume the hosted index is the source of truth unless the user asks for local-only indexing.

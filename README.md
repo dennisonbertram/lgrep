@@ -52,12 +52,16 @@ lgrep install --target all --global --server-url https://lgrep.example.com --ser
 
 Targets:
 
-- `claude` installs the Claude skill and SessionStart hook
+- `claude` installs the Claude skill, the SessionStart hook, and repo-local `CLAUDE.md` guidance by default
 - `codex` writes guidance into `AGENTS.md` or `~/.codex/AGENTS.md` when `--global` is used
 - `mcp` configures lgrep as an MCP server
 - `all` installs all three
 
-In local mode, the SessionStart hook can start local watchers automatically. In cloud mode, the hook exits immediately and relies on the shared remote index.
+Session start behavior:
+
+- In local mode, the Claude SessionStart hook can clean stale state and start local watchers automatically.
+- In cloud mode, the SessionStart hook verifies the hosted service is reachable and reminds agents to use `lgrep` before `rg`.
+- For Codex or manual sessions, start with `lgrep` first. Use `lgrep doctor` for local setup/debugging, or `lgrep project list` for hosted connectivity checks.
 
 For a machine-wide hosted setup, use:
 
@@ -68,6 +72,12 @@ lgrep install --target all --global \
 ```
 
 That persists the hosted URL and token into the active lgrep profile, updates `~/.claude/CLAUDE.md`, updates `~/.codex/AGENTS.md`, and carries the same hosted settings into the MCP config.
+
+The intended workflow is:
+
+1. Install lgrep integration.
+2. Let the SessionStart hook prepare local or hosted lgrep automatically when Claude starts.
+3. Use `lgrep search`, `lgrep callers`, `lgrep impact`, or `lgrep context` before broad `rg`/`grep` searches.
 
 ## Commands
 

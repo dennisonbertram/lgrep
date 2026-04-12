@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { queryServerMock, getServerUrlMock } = vi.hoisted(() => ({
+const { queryServerMock, getServerUrlMock, detectHostedScopeForDirectoryMock } = vi.hoisted(() => ({
   queryServerMock: vi.fn(),
   getServerUrlMock: vi.fn(),
+  detectHostedScopeForDirectoryMock: vi.fn(),
 }));
 
 vi.mock('../../server/client.js', () => ({
   queryServer: queryServerMock,
   getServerUrl: getServerUrlMock,
+}));
+
+vi.mock('../utils/hosted-auto-detect.js', () => ({
+  detectHostedScopeForDirectory: detectHostedScopeForDirectoryMock,
 }));
 
 import { runCallersCommand } from './callers.js';
@@ -18,6 +23,7 @@ describe('hosted read commands', () => {
   beforeEach(() => {
     queryServerMock.mockReset();
     getServerUrlMock.mockReset();
+    detectHostedScopeForDirectoryMock.mockReset();
     getServerUrlMock.mockReturnValue('https://lgrep.example.com');
   });
 
@@ -26,6 +32,8 @@ describe('hosted read commands', () => {
   });
 
   it('uses the hosted query server for callers', async () => {
+    detectHostedScopeForDirectoryMock.mockResolvedValue(null);
+
     queryServerMock.mockResolvedValue({
       symbol: 'createSession',
       project: 'repo-main',
@@ -57,7 +65,46 @@ describe('hosted read commands', () => {
     expect(result.count).toBe(1);
   });
 
+  it('auto-detects hosted scope for callers', async () => {
+    detectHostedScopeForDirectoryMock.mockResolvedValue({
+      project: 'lgrep',
+      worktree: 'local-cloud-onboarding',
+    });
+
+    queryServerMock.mockResolvedValue({
+      symbol: 'runInstallCommand',
+      project: 'lgrep',
+      worktree: 'local-cloud-onboarding',
+      callers: [
+        {
+          file: 'src/cli/index.ts',
+          line: 1204,
+          callerName: 'registerInstallCommand',
+          callerKind: 'function',
+          worktreeName: 'local-cloud-onboarding',
+        },
+      ],
+      count: 1,
+    });
+
+    const result = await runCallersCommand('runInstallCommand', {
+      showProgress: false,
+      json: true,
+    });
+
+    expect(detectHostedScopeForDirectoryMock).toHaveBeenCalledTimes(1);
+    expect(queryServerMock).toHaveBeenCalledWith({
+      method: 'callers',
+      project: 'lgrep',
+      worktree: 'local-cloud-onboarding',
+      params: { symbol: 'runInstallCommand' },
+    });
+    expect(result.indexName).toBe('local-cloud-onboarding');
+  });
+
   it('uses the hosted query server for impact', async () => {
+    detectHostedScopeForDirectoryMock.mockResolvedValue(null);
+
     queryServerMock.mockResolvedValue({
       symbol: 'createSession',
       project: 'repo-main',
@@ -92,11 +139,16 @@ describe('hosted read commands', () => {
   });
 
   it('uses the hosted query server for context packages', async () => {
+    detectHostedScopeForDirectoryMock.mockResolvedValue({
+      project: 'repo-main',
+      worktree: undefined,
+    });
+
     queryServerMock.mockResolvedValue({
       task: 'understand session token flow',
-      indexName: 'repo-main/feature-login',
+      indexName: 'repo-main',
       project: 'repo-main',
-      worktree: 'feature-login',
+      worktree: undefined,
       relevantFiles: [
         {
           filePath: 'src/session.ts',
@@ -116,8 +168,6 @@ describe('hosted read commands', () => {
     });
 
     const result = await runContextCommand('understand session token flow', {
-      project: 'repo-main',
-      worktree: 'feature-login',
       limit: 5,
       maxTokens: 2000,
       summaryOnly: true,
@@ -128,7 +178,7 @@ describe('hosted read commands', () => {
     expect(queryServerMock).toHaveBeenCalledWith({
       method: 'context',
       project: 'repo-main',
-      worktree: 'feature-login',
+      worktree: undefined,
       params: {
         task: 'understand session token flow',
         limit: 5,
@@ -138,7 +188,8 @@ describe('hosted read commands', () => {
         noApproach: true,
       },
     });
-    expect(result.indexName).toBe('repo-main/feature-login');
+    expect(detectHostedScopeForDirectoryMock).toHaveBeenCalledTimes(1);
+    expect(result.indexName).toBe('repo-main');
     expect(result.relevantFiles).toHaveLength(1);
   });
 });

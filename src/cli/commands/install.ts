@@ -197,7 +197,9 @@ function buildRemoteGuidance(serverUrl: string): string {
     '### Hosted Remote Service',
     '',
     `- This machine is configured to use the hosted lgrep service at \`${serverUrl}\`.`,
-    '- Prefer the hosted project/worktree data when it is available.',
+    '- Treat the hosted project/worktree data as the default source of truth when it is available.',
+    '- At session start, prefer `lgrep project list` or jump straight into `lgrep search`, `lgrep callers`, `lgrep impact`, or `lgrep context` before using `rg`.',
+    '- Let hosted auto-detection choose the project/worktree first. Only add `--project` or `--worktree` when auto-detection is ambiguous.',
     '- Do not ask the user to re-export `LGREP_SERVER_URL` or `LGREP_SERVER_AUTH_TOKEN` if lgrep is already configured globally.',
   ].join('\n');
 }
@@ -213,24 +215,10 @@ async function renderInstructionSection(templateName: string, serverUrl?: string
 
 async function createSkill(homedir: string) {
   const skillPath = path.join(homedir, '.claude', 'skills', 'lgrep-search', 'SKILL.md');
-  if (await fileExists(skillPath)) {
-    return {
-      created: false,
-      updated: false,
-      alreadyExists: true,
-      path: skillPath,
-    };
-  }
-
-  await fs.mkdir(path.dirname(skillPath), { recursive: true });
-  await fs.writeFile(skillPath, await loadTemplate('skill.md'));
-
-  return {
-    created: true,
-    updated: false,
-    alreadyExists: false,
-    path: skillPath,
-  };
+  return await writeManagedFile(
+    skillPath,
+    await loadTemplate('skill.md'),
+  );
 }
 
 async function addSessionStartHook(homedir: string) {
@@ -373,6 +361,7 @@ export async function runInstallCommand(
   const {
     skipSkill = false,
     skipHook = false,
+    skipClaudeMd = false,
     addToClaudeMd = false,
     addToProject = false,
     global: installGlobal = false,
@@ -420,14 +409,17 @@ export async function runInstallCommand(
         result.settingsPath = hookResult.path;
       }
 
-      if (addToClaudeMd || installGlobal) {
+      const shouldUpdateUserClaudeMd = !skipClaudeMd && (addToClaudeMd || installGlobal);
+      const shouldUpdateProjectClaudeMd = !skipClaudeMd && (addToProject || !installGlobal);
+
+      if (shouldUpdateUserClaudeMd) {
         const userClaudeMdResult = await updateUserClaudeMd(homedir, result.configuredServerUrl);
         result.userClaudeMdUpdated = userClaudeMdResult.updated;
         result.userClaudeMdAlreadyHasLgrep = userClaudeMdResult.alreadyHasLgrep;
         result.userClaudeMdPath = userClaudeMdResult.path;
       }
 
-      if (addToProject) {
+      if (shouldUpdateProjectClaudeMd) {
         const claudeMdResult = await updateProjectClaudeMd(result.configuredServerUrl);
         result.projectClaudeUpdated = claudeMdResult.updated;
         result.projectClaudeAlreadyHasLgrep = claudeMdResult.alreadyHasLgrep;

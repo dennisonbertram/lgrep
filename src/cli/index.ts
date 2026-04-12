@@ -1352,8 +1352,9 @@ program
   .option('--global', 'Install user-global Claude/Codex guidance instead of only repo-local guidance')
   .option('--skip-skill', 'Do not create the skill')
   .option('--skip-hook', 'Do not add SessionStart hook')
+  .option('--skip-claude-md', 'Do not write lgrep guidance into CLAUDE.md files')
   .option('--add-to-claude-md', 'Also add lgrep section to ~/.claude/CLAUDE.md')
-  .option('--add-to-project', 'Also add lgrep section to project CLAUDE.md')
+  .option('--add-to-project', 'Also add lgrep section to project CLAUDE.md (repo-local Claude install does this by default)')
   .option('--server-url <url>', 'Persist a hosted query server URL in the active lgrep profile')
   .option('--server-auth-token <token>', 'Persist a hosted bearer token in the active lgrep profile')
   .option('-f, --force', 'Overwrite existing MCP configuration when target includes mcp')
@@ -1364,6 +1365,7 @@ program
     global?: boolean;
     skipSkill?: boolean;
     skipHook?: boolean;
+    skipClaudeMd?: boolean;
     addToClaudeMd?: boolean;
     addToProject?: boolean;
     serverUrl?: string;
@@ -1378,6 +1380,7 @@ program
         global: options.global,
         skipSkill: options.skipSkill,
         skipHook: options.skipHook,
+        skipClaudeMd: options.skipClaudeMd,
         addToClaudeMd: options.addToClaudeMd,
         addToProject: options.addToProject,
         serverUrl: options.serverUrl,
@@ -1427,7 +1430,7 @@ program
         }
       }
 
-      if (options.addToClaudeMd) {
+      if (!options.skipClaudeMd && (options.addToClaudeMd || options.global)) {
         if (result.userClaudeMdUpdated) {
           console.log(`  ✓ CLAUDE.md updated at ${result.userClaudeMdPath}`);
         } else if (result.userClaudeMdAlreadyHasLgrep) {
@@ -1435,7 +1438,7 @@ program
         }
       }
 
-      if (options.addToProject) {
+      if (!options.skipClaudeMd && (options.addToProject || (!options.global && result.targetsApplied.includes('claude')))) {
         if (result.projectClaudeUpdated) {
           console.log(`  ✓ Project CLAUDE.md updated at ${result.projectClaudePath}`);
         } else if (result.projectClaudeAlreadyHasLgrep) {
@@ -1463,6 +1466,10 @@ program
         }
       }
 
+      console.log('\nStartup guidance:');
+      console.log('  - Claude SessionStart should prepare lgrep automatically.');
+      console.log('  - In hosted mode, start with lgrep and let project/worktree auto-detection work before adding manual flags.');
+      console.log('  - In local mode, let the watcher flow keep the repo fresh and use lgrep before rg.');
       console.log('\nlgrep integration is ready.');
     } catch (err) {
       if (options.json) {

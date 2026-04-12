@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { queryServerMock, getServerUrlMock, openConfiguredDatabaseMock } = vi.hoisted(() => ({
+const {
+  queryServerMock,
+  getServerUrlMock,
+  openConfiguredDatabaseMock,
+  detectHostedScopeForDirectoryMock,
+} = vi.hoisted(() => ({
   queryServerMock: vi.fn(),
   getServerUrlMock: vi.fn(),
   openConfiguredDatabaseMock: vi.fn(),
+  detectHostedScopeForDirectoryMock: vi.fn(),
 }));
 
 vi.mock('../../server/client.js', () => ({
@@ -13,6 +19,10 @@ vi.mock('../../server/client.js', () => ({
 
 vi.mock('../../storage/database-config.js', () => ({
   openConfiguredDatabase: openConfiguredDatabaseMock,
+}));
+
+vi.mock('../utils/hosted-auto-detect.js', () => ({
+  detectHostedScopeForDirectory: detectHostedScopeForDirectoryMock,
 }));
 
 vi.mock('../utils/progress.js', () => ({
@@ -31,6 +41,7 @@ describe('search command (hosted server)', () => {
     queryServerMock.mockReset();
     getServerUrlMock.mockReset();
     openConfiguredDatabaseMock.mockReset();
+    detectHostedScopeForDirectoryMock.mockReset();
     getServerUrlMock.mockReturnValue('https://lgrep.example.com');
   });
 
@@ -39,6 +50,8 @@ describe('search command (hosted server)', () => {
   });
 
   it('uses the hosted query server for project-scoped semantic search', async () => {
+    detectHostedScopeForDirectoryMock.mockResolvedValue(null);
+
     queryServerMock.mockResolvedValue({
       project: 'demo-project',
       results: [
@@ -83,6 +96,48 @@ describe('search command (hosted server)', () => {
         },
       ],
     });
+  });
+
+  it('auto-detects hosted project and worktree from the current directory', async () => {
+    detectHostedScopeForDirectoryMock.mockResolvedValue({
+      project: 'lgrep',
+      worktree: 'local-cloud-onboarding',
+    });
+
+    queryServerMock.mockResolvedValue({
+      project: 'lgrep',
+      worktree: 'local-cloud-onboarding',
+      results: [
+        {
+          relativePath: 'src/cli/commands/server-install-remote.ts',
+          content: 'export async function runServerInstallRemoteCommand() {}',
+          score: 0.94,
+          lineStart: 12,
+          lineEnd: 24,
+          chunkIndex: 0,
+        },
+      ],
+      count: 1,
+    });
+
+    const result = await runSearchCommand('server install remote', {
+      showProgress: false,
+      json: true,
+    });
+
+    expect(detectHostedScopeForDirectoryMock).toHaveBeenCalledTimes(1);
+    expect(queryServerMock).toHaveBeenCalledWith({
+      method: 'search',
+      project: 'lgrep',
+      worktree: 'local-cloud-onboarding',
+      params: {
+        query: 'server install remote',
+        limit: 10,
+        diversity: 0.7,
+      },
+    });
+    expect(result.indexName).toBe('local-cloud-onboarding');
+    expect(openConfiguredDatabaseMock).not.toHaveBeenCalled();
   });
 
   it('falls back to local storage when an explicit index is requested', async () => {

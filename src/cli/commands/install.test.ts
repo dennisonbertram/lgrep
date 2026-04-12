@@ -28,8 +28,8 @@ describe('install command', () => {
   // Mock templates
   const mockSkillTemplate = '---\nname: lgrep-search\n---\n# lgrep skill';
   const mockHookTemplate = '#!/bin/bash\necho "lgrep-check"';
-  const mockClaudeMdTemplate = '## lgrep\n\nInstructions here';
-  const mockAgentsTemplate = '## lgrep\n\nUse semantic code search here';
+  const mockClaudeMdTemplate = '## lgrep\n\nTreat `lgrep` as the default entrypoint for understanding this codebase.';
+  const mockAgentsTemplate = '## lgrep\n\nTreat `lgrep` as the default tool for repo exploration.';
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -100,6 +100,16 @@ describe('install command', () => {
 
     it('should not overwrite existing skill', async () => {
       vi.mocked(fs.access).mockResolvedValue(undefined);
+      vi.mocked(fs.readFile).mockImplementation((path) => {
+        const pathStr = path.toString();
+        if (pathStr.includes('.claude/skills/lgrep-search/SKILL.md')) {
+          return Promise.resolve(mockSkillTemplate);
+        }
+        if (pathStr.includes('templates/skill.md')) {
+          return Promise.resolve(mockSkillTemplate);
+        }
+        return Promise.reject(new Error('ENOENT'));
+      });
 
       const result = await runInstallCommand({
         skipHook: true,
@@ -110,6 +120,36 @@ describe('install command', () => {
       expect(result.success).toBe(true);
       expect(result.skillCreated).toBe(false);
       expect(result.skillAlreadyExists).toBe(true);
+    });
+
+    it('should update existing skill when the template changes', async () => {
+      vi.mocked(fs.access).mockResolvedValue(undefined);
+      vi.mocked(fs.readFile).mockImplementation((path) => {
+        const pathStr = path.toString();
+        if (pathStr.includes('.claude/skills/lgrep-search/SKILL.md')) {
+          return Promise.resolve('old skill content');
+        }
+        if (pathStr.includes('templates/skill.md')) {
+          return Promise.resolve(mockSkillTemplate);
+        }
+        return Promise.reject(new Error('ENOENT'));
+      });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+      const result = await runInstallCommand({
+        skipHook: true,
+        skipClaudeMd: true,
+        json: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.skillCreated).toBe(false);
+      expect(result.skillUpdated).toBe(true);
+      expect(result.skillAlreadyExists).toBe(false);
+      expect(fs.writeFile).toHaveBeenCalledWith(
+        skillPath,
+        expect.stringContaining('name: lgrep-search'),
+      );
     });
   });
 
@@ -409,7 +449,6 @@ describe('install command', () => {
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
-        skipClaudeMd: true,
         addToProject: true,
         json: false,
       });
@@ -450,7 +489,6 @@ describe('install command', () => {
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
-        skipClaudeMd: true,
         addToProject: true,
         json: false,
       });
@@ -460,7 +498,7 @@ describe('install command', () => {
       expect(result.projectClaudeAlreadyHasLgrep).toBe(true);
     });
 
-    it('should skip project CLAUDE.md when flag is not set', async () => {
+    it('should skip project CLAUDE.md when skipClaudeMd is set', async () => {
       const result = await runInstallCommand({
         skipSkill: true,
         skipHook: true,
@@ -470,6 +508,26 @@ describe('install command', () => {
 
       expect(result.success).toBe(true);
       expect(result.projectClaudeUpdated).toBe(false);
+    });
+
+    it('should update project CLAUDE.md by default for repo-local Claude installs', async () => {
+      vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+      const result = await runInstallCommand({
+        skipSkill: true,
+        skipHook: true,
+        json: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.projectClaudeUpdated).toBe(true);
+
+      const writeCall = vi.mocked(fs.writeFile).mock.calls.find(
+        (call) => call[0].toString().endsWith('CLAUDE.md'),
+      );
+      expect(writeCall).toBeDefined();
+      expect(writeCall![1]).toContain('Treat `lgrep` as the default entrypoint');
     });
   });
 
@@ -494,6 +552,7 @@ describe('install command', () => {
       );
       expect(writeCall).toBeDefined();
       expect(writeCall![1]).toContain('## lgrep');
+      expect(writeCall![1]).toContain('Treat `lgrep` as the default tool for repo exploration.');
     });
 
     it('should install global Codex guidance when --global is used', async () => {
@@ -516,6 +575,7 @@ describe('install command', () => {
       expect(writeCall).toBeDefined();
       expect(writeCall![1]).toContain('## lgrep');
     });
+
   });
 
   describe('JSON output', () => {

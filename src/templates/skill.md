@@ -7,7 +7,7 @@ description: "Semantic code search and code-intelligence guidance for lgrep. Use
 
 ## Overview
 
-lgrep helps you search and analyze code by meaning, not just text. Use it before broad repo searches when you need:
+Treat `lgrep` as the default tool for understanding a codebase. Use it before broad `rg` or `grep` sweeps whenever you need:
 
 - semantic code search
 - definitions and usages
@@ -15,10 +15,17 @@ lgrep helps you search and analyze code by meaning, not just text. Use it before
 - dead code, unused exports, or cycles
 - task-oriented context building
 
+## Session Start
+
+- Start with `lgrep`, not with broad text search.
+- In **local mode**, the Claude `SessionStart` hook can clean stale state and start a watcher for the current repo automatically.
+- In **cloud mode**, assume the shared remote index is the default path and let hosted auto-detection pick the current project/worktree when possible.
+- If startup looks wrong, run `lgrep doctor`.
+
 ## Storage-Aware Behavior
 
 - In **local mode**, `lgrep watch` can keep the current repo indexed as files change.
-- In **cloud mode**, prefer the shared remote index. Do not start local watchers unless the user explicitly asks for a local index.
+- In **cloud mode**, prefer the shared remote index. Do not start local watchers or rebuild local indexes unless the user explicitly asks for a local workflow.
 
 ## Fast Path
 
@@ -26,7 +33,7 @@ Start with:
 
 ```bash
 lgrep doctor
-lgrep list
+lgrep project list
 ```
 
 Then use:
@@ -46,5 +53,4 @@ lgrep intent "what calls awardBadge"
 - Prefer `lgrep intent` when the user asks in natural language.
 - Prefer `lgrep context` before implementation work that spans multiple files.
 - Prefer `lgrep impact` or `lgrep callers` before refactors.
-- In local mode, if the repo is not indexed yet, create or update the index first.
-- In cloud mode, assume the configured remote index is the source of truth unless the user asks for local indexing.
+- Use `rg` only when you already know the exact literal string or regex you need to confirm.

@@ -3,6 +3,7 @@ import { getCalls, searchSymbols, getSymbols } from '../../storage/code-intel.js
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { createSpinner } from '../utils/progress.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
+import { detectHostedScopeForDirectory } from '../utils/hosted-auto-detect.js';
 import { getServerUrl, queryServer } from '../../server/client.js';
 import type { QueryCallersResponse } from '../../server/query-server.js';
 
@@ -59,18 +60,25 @@ export async function runCallersCommand(
   try {
     spinner?.start();
 
-    if (getServerUrl() && !options.index && (options.project || options.worktree)) {
+    const hostedScope = getServerUrl() && !options.index && !options.project && !options.worktree
+      ? await detectHostedScopeForDirectory()
+      : null;
+
+    if (getServerUrl() && !options.index && (options.project || options.worktree || hostedScope)) {
+      const project = options.project ?? hostedScope?.project;
+      const worktree = options.worktree ?? hostedScope?.worktree;
+
       const response = await queryServer({
         method: 'callers',
-        project: options.project,
-        worktree: options.worktree,
+        project,
+        worktree,
         params: { symbol },
       }) as QueryCallersResponse;
 
       return {
         success: true,
         symbol,
-        indexName: options.worktree ?? options.project ?? 'hosted',
+        indexName: worktree ?? project ?? 'hosted',
         callers: response.callers,
         count: response.count,
       };
