@@ -8,16 +8,18 @@ Today it gives you:
 
 - a shared HTTP query service backed by Postgres
 - bearer-token protection for that service
-- project-scoped token storage for hosted clients and agents
+- filesystem-backed scoped tokens for self-hosted deployments on the same machine as the query server
 - remote project/worktree discovery from the CLI when `LGREP_SERVER_URL` is set
 - remote semantic search from the CLI when `LGREP_SERVER_URL` is set
+- remote `callers`, `impact`, and `context` when `LGREP_SERVER_URL` is set and you target a project or worktree
+- hosted MCP usage through the normal stdio MCP server by passing `LGREP_SERVER_URL` plus `LGREP_SERVER_AUTH_TOKEN`
 
 Today it does not yet give you:
 
 - multi-tenant isolation
 - per-project or per-user auth
 - hosted indexing workers
-- a hosted MCP endpoint
+- an HTTP-native hosted MCP endpoint
 
 Think of this as a secure single-tenant team deployment, not the final lgrep Cloud product.
 
@@ -35,9 +37,10 @@ then the flow is:
 1. Point a `cloud` profile at Postgres.
 2. Create a `project`.
 3. Add `worktree`s for each checkout or branch you want searchable.
-4. Create a scoped token with `lgrep server token create`.
-5. Run `lgrep server start`.
-6. Give agents only `LGREP_SERVER_URL` and `LGREP_SERVER_AUTH_TOKEN`.
+4. Run `lgrep server start`.
+5. For self-hosted deployments, create a scoped token with `lgrep server token create`.
+6. For Railway and similar remote deployments today, use the shared `LGREP_SERVER_AUTH_TOKEN` service secret.
+7. Give agents only `LGREP_SERVER_URL` and `LGREP_SERVER_AUTH_TOKEN`.
 
 That is the current hosted setup. You do not need to wait for the later roadmap items to start using it.
 
@@ -61,7 +64,7 @@ What this does:
 - creates the project if it does not exist
 - creates or updates the main worktree
 - creates or updates additional worktrees
-- mints a scoped hosted token for the project
+- mints a scoped hosted token for colocated/self-hosted use
 - prints the exact server and client commands to use next
 
 The `--worktree` format is:
@@ -150,13 +153,15 @@ The server will accept:
 - the legacy single token from `LGREP_SERVER_AUTH_TOKEN`, if set
 - any scoped token stored in the local token store
 
+For remote deployments like Railway, the service-wide `LGREP_SERVER_AUTH_TOKEN` is the supported auth path today. The scoped token file is local to the machine where you ran `lgrep server token create`.
+
 ## Client setup
 
 On any client machine or agent host, point lgrep at the shared service and use the created token:
 
 ```bash
 export LGREP_SERVER_URL="https://lgrep.example.com"
-export LGREP_SERVER_AUTH_TOKEN="paste-the-created-token"
+export LGREP_SERVER_AUTH_TOKEN="paste-the-service-token"
 ```
 
 Discover the hosted project and its worktrees:
@@ -167,12 +172,15 @@ lgrep project info repo-main
 lgrep worktree list --project repo-main
 ```
 
-Then run project- or worktree-scoped semantic search:
+Then run hosted reads against the project or a specific worktree:
 
 ```bash
 lgrep search "authentication flow" --project repo-main
 lgrep search "request validation" --project repo-main --worktree main
 lgrep search "login state bug" --project repo-main --worktree feature-login
+lgrep callers createSession --project repo-main --worktree feature-login
+lgrep impact createSession --project repo-main --worktree feature-login
+lgrep context "trace session token flow" --project repo-main --worktree feature-login
 ```
 
 When `LGREP_SERVER_URL` is set, `lgrep search` will use the hosted service for semantic search if:
@@ -187,6 +195,60 @@ When `LGREP_SERVER_URL` is set, these commands also use the hosted service:
 - `lgrep project info <name>`
 - `lgrep worktree list`
 - `lgrep worktree diff <a> <b>`
+- `lgrep callers <symbol> --project <name> [--worktree <name>]`
+- `lgrep impact <symbol> --project <name> [--worktree <name>]`
+- `lgrep context "<task>" --project <name> [--worktree <name>]`
+
+## Hosted MCP
+
+The existing stdio MCP server can talk to the hosted query service.
+
+Export the hosted env vars first:
+
+```bash
+export LGREP_SERVER_URL="https://lgrep.example.com"
+export LGREP_SERVER_AUTH_TOKEN="paste-the-service-token"
+```
+
+Then install the MCP integration:
+
+```bash
+lgrep install --target mcp
+```
+
+If `LGREP_SERVER_URL` and `LGREP_SERVER_AUTH_TOKEN` are set when you run that install command, they are written into the generated MCP config so Claude/Codex can use the hosted project without direct database access.
+
+## Railway deployment
+
+This repo now includes a Railway-ready deployment shape:
+
+- [nixpacks.toml](../../nixpacks.toml)
+- [start-hosted-server.sh](../../scripts/start-hosted-server.sh)
+
+The startup script automatically runs:
+
+1. `lgrep init --mode cloud --yes --skip-index`
+2. `lgrep server start --port $PORT`
+
+That means a Railway container can boot entirely from environment variables.
+
+Suggested setup:
+
+1. Create a Railway Postgres service.
+2. Create a service for this repo, for example `lgrep-server`.
+3. Set `LGREP_DATABASE_URL` on `lgrep-server` to the Postgres `DATABASE_URL` reference.
+4. Set `LGREP_SERVER_AUTH_TOKEN` on `lgrep-server` for one shared bearer token.
+5. Set `OPENAI_API_KEY` on `lgrep-server` if you want hosted semantic search and hosted `context`.
+6. Deploy the repo with `railway up -s lgrep-server`.
+7. Generate a Railway domain for `lgrep-server`.
+8. Bootstrap your project/worktrees into the same database from a machine that can reach Postgres:
+
+```bash
+export LGREP_DATABASE_URL="postgres://..."
+lgrep server bootstrap /path/to/repo --project repo-main --branch main
+```
+
+Today, Railway should use the shared `LGREP_SERVER_AUTH_TOKEN` secret for clients and agents. The scoped token file created by `lgrep server token create` is local to the machine that created it unless you also mount and manage a shared token-store file on the service.
 
 ## Health and operations
 
@@ -207,9 +269,9 @@ The response includes:
 ## Current limitations
 
 - This is still single-tenant. Tokens are scoped to projects/worktrees, but there is no tenant or org boundary yet.
-- Remote CLI usage currently covers hosted discovery plus semantic search. Code-intelligence commands still use direct storage access.
+- Remote CLI usage covers hosted discovery, semantic search, callers, impact, and context. Definitions/usages and the rest of code-intel still use direct storage access.
 - Indexing is still a write-side CLI workflow pointed at Postgres, not a managed hosted job system.
-- Token management is local-file-based. There is no hosted admin API yet.
+- Token management is still file-based or legacy-env-based. There is no hosted admin API yet.
 
 ## What "next step" means
 
@@ -230,10 +292,8 @@ Use the workflow in this guide:
 
 The next engineering milestones are:
 
-- hosted `context`
-- hosted `callers`
-- hosted `impact`
-- hosted MCP
+- hosted HTTP MCP transport
+- hosted definitions/usages and richer code-intel endpoints
 - eventually hosted indexing workers and full multi-tenancy
 
 Those are improvements to the hosted experience. They are not blockers for the basic "one hosted DB, many worktrees" workflow that exists now.

@@ -40,6 +40,8 @@ function formatToolResponse(result: unknown): ToolContent[] {
 export async function handleSearch(args: {
   query?: string;
   index?: string;
+  project?: string;
+  worktree?: string;
   limit?: number;
   diversity?: number;
   usages?: string;
@@ -48,6 +50,8 @@ export async function handleSearch(args: {
 }): Promise<ToolContent[]> {
   const result = await runSearchCommand(args.query || '', {
     index: args.index,
+    project: args.project,
+    worktree: args.worktree,
     limit: args.limit,
     diversity: args.diversity,
     usages: args.usages,
@@ -66,9 +70,13 @@ export async function handleSearch(args: {
 export async function handleCallers(args: {
   symbol: string;
   index?: string;
+  project?: string;
+  worktree?: string;
 }): Promise<ToolContent[]> {
   const result = await runCallersCommand(args.symbol, {
     index: args.index,
+    project: args.project,
+    worktree: args.worktree,
     json: true,
     showProgress: false,
   });
@@ -82,9 +90,13 @@ export async function handleCallers(args: {
 export async function handleImpact(args: {
   symbol: string;
   index?: string;
+  project?: string;
+  worktree?: string;
 }): Promise<ToolContent[]> {
   const result = await runImpactCommand(args.symbol, {
     index: args.index,
+    project: args.project,
+    worktree: args.worktree,
     json: true,
     showProgress: false,
   });
@@ -212,11 +224,15 @@ export async function handleRename(args: {
 export async function handleContext(args: {
   task: string;
   index?: string;
+  project?: string;
+  worktree?: string;
   limit?: number;
   maxTokens?: number;
 }): Promise<ToolContent[]> {
   const result = await runContextCommand(args.task, {
     index: args.index,
+    project: args.project,
+    worktree: args.worktree,
     limit: args.limit,
     maxTokens: args.maxTokens,
     json: true,

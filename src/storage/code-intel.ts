@@ -1208,11 +1208,25 @@ export async function addSharedCalls(
   const values: string[] = [];
   const params: unknown[] = [];
 
+  const getCallerName = (call: CallEdge): string => {
+    if (!call.callerId) {
+      return '';
+    }
+
+    const parts = call.callerId.split(':');
+    if (parts.length < 2) {
+      return '';
+    }
+
+    const name = parts[parts.length - 2];
+    return name && name !== '__top_level__' ? name : '';
+  };
+
   for (const call of calls) {
     const base = params.length;
     params.push(
       contentHash,
-      call.callerFile ?? '',
+      getCallerName(call),
       call.calleeName,
       call.calleeFile ?? '',
       call.position.line,

@@ -25,6 +25,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "start": "bash ./scripts/start-hosted-server.sh",
     "build": "tsup && npm run build:viewer",
     "build:test-binaries": "node scripts/ensure-test-binaries.mjs --force",
     "dev": "tsup --watch",

@@ -42,14 +42,17 @@ Clients and agents can then query through the hosted endpoint:
 
 ```bash
 export LGREP_SERVER_URL="https://lgrep.example.com"
-export LGREP_SERVER_AUTH_TOKEN="token-printed-by-bootstrap"
+export LGREP_SERVER_AUTH_TOKEN="your-hosted-service-token"
 
 lgrep project info repo-main
 lgrep worktree list --project repo-main
 lgrep search "entry point" --project repo-main
+lgrep callers createSession --project repo-main --worktree feature-login
+lgrep impact createSession --project repo-main --worktree feature-login
+lgrep context "trace session token flow" --project repo-main --worktree feature-login
 ```
 
-This hosted path is currently a single-tenant query layer with project/worktree-scoped tokens. See [hosted-query-service.md](./hosted-query-service.md) for the supported workflow and current limitations.
+This hosted path is currently a single-tenant query layer. For Railway and other remote deployments today, use the shared `LGREP_SERVER_AUTH_TOKEN` service secret. The bootstrap-created scoped token is still filesystem-backed and best for self-hosted deployments that share the same token store. See [hosted-query-service.md](./hosted-query-service.md) for the supported workflow, hosted MCP setup, Railway deployment path, and current limitations.
 
 If your real goal is "one hosted Postgres database with many worktrees under one project", start with [hosted-query-service.md](./hosted-query-service.md). That guide is the clearest end-to-end path for the current hosted setup.
 

@@ -104,6 +104,15 @@ function inferProjectName(path: string): string {
   return base || 'repo-main';
 }
 
+function isRemoteServerUrl(serverUrl: string): boolean {
+  try {
+    const parsed = new URL(serverUrl);
+    return !['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+  } catch {
+    return !serverUrl.includes('localhost') && !serverUrl.includes('127.0.0.1');
+  }
+}
+
 function parseWorktreeSpec(spec: string): ParsedWorktreeSpec {
   const parts = spec.split('|').map((part) => part.trim());
   if (parts.length < 2 || parts.length > 3) {
@@ -233,6 +242,7 @@ export async function runServerBootstrapCommand(options: ServerBootstrapOptions)
   const mainName = options.mainName?.trim() || 'main';
   const port = options.port ?? 8420;
   const serverUrl = options.serverUrl?.trim() || `http://127.0.0.1:${port}`;
+  const remoteServer = isRemoteServerUrl(serverUrl);
   const tokenLabel = options.tokenLabel?.trim() || `${projectName} agents`;
   const parsedWorktrees = (options.worktrees ?? []).map(parseWorktreeSpec);
   const duplicateNames = new Set<string>();
@@ -282,6 +292,17 @@ export async function runServerBootstrapCommand(options: ServerBootstrapOptions)
   const startCommand = `LGREP_PROFILE=${profile} ${cliInvocation} server start --port ${port}`;
   const tmuxCommand = `tmux new-session -d -s lgrep-server-${project.name} '${startCommand}'`;
   const statusCommand = `LGREP_PROFILE=${profile} ${cliInvocation} server status`;
+  const notes = [
+    `Cloud profile "${profile}" is configured to use ${databaseUrlEnv}.`,
+    `Project "${project.name}" is ready for hosted multi-worktree queries.`,
+    'Save the token now. It will not be shown again.',
+  ];
+
+  if (remoteServer) {
+    notes.push(
+      `Scoped tokens are stored in ${token.path}. Remote deployments like Railway still authenticate with LGREP_SERVER_AUTH_TOKEN until DB-backed hosted token storage ships.`
+    );
+  }
 
   return {
     success: true,
@@ -321,10 +342,6 @@ export async function runServerBootstrapCommand(options: ServerBootstrapOptions)
         `lgrep search "authentication flow" --project ${project.name}`,
       ],
     },
-    notes: [
-      `Cloud profile "${profile}" is configured to use ${databaseUrlEnv}.`,
-      `Project "${project.name}" is ready for hosted multi-worktree queries.`,
-      'Save the token now. It will not be shown again.',
-    ],
+    notes,
   };
 }

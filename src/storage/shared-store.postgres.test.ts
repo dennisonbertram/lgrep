@@ -900,10 +900,21 @@ describe('shared content-addressable store (postgres)', () => {
 
       await addSharedCalls(db, 'hash-a', [call]);
       expect(state.sharedCalls).toHaveLength(1);
+      expect(state.sharedCalls[0]?.caller_name).toBe('');
 
       // Duplicate - should be ignored
       await addSharedCalls(db, 'hash-a', [call]);
       expect(state.sharedCalls).toHaveLength(1);
+
+      const namedCall = {
+        ...call,
+        id: 'call-2',
+        callerId: 'src/a.ts:startApp:function',
+        position: { line: 8, column: 2 },
+      };
+
+      await addSharedCalls(db, 'hash-a', [namedCall]);
+      expect(state.sharedCalls[1]?.caller_name).toBe('startApp');
     } finally {
       await db.close();
     }

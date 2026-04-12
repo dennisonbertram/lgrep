@@ -165,13 +165,18 @@ Then start the server with the command it prints, and on clients or agents:
 
 ```bash
 export LGREP_SERVER_URL="https://lgrep.example.com"
-export LGREP_SERVER_AUTH_TOKEN="token-printed-by-bootstrap"
+export LGREP_SERVER_AUTH_TOKEN="your-hosted-service-token"
 lgrep project info repo-main
 lgrep worktree list --project repo-main
 lgrep search "authentication flow" --project repo-main
+lgrep callers createSession --project repo-main --worktree feature-login
+lgrep impact createSession --project repo-main --worktree feature-login
+lgrep context "trace session token flow" --project repo-main --worktree feature-login
 ```
 
-Today this hosted path is a bearer-token-protected, single-tenant query layer for project/worktree discovery and semantic search. See [docs/guides/hosted-query-service.md](docs/guides/hosted-query-service.md) for the hosted multi-worktree workflow and current limits.
+If you want MCP clients to use the hosted service, export the same env vars before running `lgrep install --target mcp`. The generated MCP config will carry `LGREP_SERVER_URL` and `LGREP_SERVER_AUTH_TOKEN` through to the stdio MCP server.
+
+Today this hosted path is a bearer-token-protected, single-tenant query layer for project/worktree discovery, semantic search, callers, impact, and context packages. For Railway and other remote deployments today, use the service-wide `LGREP_SERVER_AUTH_TOKEN`. The bootstrap-created scoped token is still filesystem-backed and is best for self-hosted deployments where the query server shares the same token store. See [docs/guides/hosted-query-service.md](docs/guides/hosted-query-service.md) for the hosted multi-worktree workflow, Railway deploy path, and current limits.
 
 ### If You Want To Use Hosted Mode Today
 
@@ -180,9 +185,10 @@ This is the practical next step if your goal is "one hosted database, many workt
 1. Create a `cloud` profile that points at Postgres.
 2. Create one `project` for your repo.
 3. Create one `worktree` per branch or checkout you want searchable.
-4. Mint a scoped token with `lgrep server token create`.
-5. Run `lgrep server start` on the machine that has Postgres access.
-6. Point agents at `LGREP_SERVER_URL` plus the scoped `LGREP_SERVER_AUTH_TOKEN`.
+4. Run `lgrep server start` on the machine that has Postgres access.
+5. For self-hosted deployments, you can mint a scoped token with `lgrep server token create`.
+6. For Railway and similar remote deployments today, use the shared `LGREP_SERVER_AUTH_TOKEN` service secret.
+7. Point agents at `LGREP_SERVER_URL` plus `LGREP_SERVER_AUTH_TOKEN`.
 
 That is enough to start using hosted lgrep now.
 
@@ -190,10 +196,9 @@ That is enough to start using hosted lgrep now.
 
 The next product step is not another setup step for you. It is feature expansion on top of the hosted query service:
 
-- hosted `context`
-- hosted `callers`
-- hosted `impact`
-- hosted MCP
+- hosted HTTP MCP transport
+- richer hosted code-intel coverage like definitions/usages and deeper impact analysis
+- background sync and hosted indexing workers
 
 Those will make the hosted path more useful for agents, but they are not required for the current multi-worktree setup.
 

@@ -5,12 +5,16 @@ import { getIndex } from '../../storage/lance.js';
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 import type { ContextPackage } from '../../types/context.js';
+import { getServerUrl, queryServer } from '../../server/client.js';
+import type { QueryContextResponse } from '../../server/query-server.js';
 
 /**
  * Options for the context command.
  */
 export interface ContextCommandOptions {
   index?: string;
+  project?: string;
+  worktree?: string;
   limit?: number;
   maxTokens?: number;
   depth?: number;
@@ -31,6 +35,24 @@ export async function runContextCommand(
   // Validate task
   if (!task || task.trim().length === 0) {
     throw new Error('Task description is required');
+  }
+
+  if (getServerUrl() && !options.index && (options.project || options.worktree)) {
+    const response = await queryServer({
+      method: 'context',
+      project: options.project,
+      worktree: options.worktree,
+      params: {
+        task,
+        limit: options.limit,
+        maxTokens: options.maxTokens,
+        depth: options.depth,
+        summaryOnly: options.summaryOnly,
+        noApproach: options.noApproach,
+      },
+    }) as QueryContextResponse;
+
+    return response;
   }
 
   // Auto-detect index if not provided
