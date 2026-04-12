@@ -15,7 +15,9 @@ TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/lgrep-cloud-smoke.XXXXXX")"
 TEST_HOME="$TMP_ROOT/lgrep-home"
 TEST_USER_HOME="$TMP_ROOT/home"
 TEST_PROJECT="$TMP_ROOT/project"
+JSON_DIR="$TMP_ROOT/json"
 mkdir -p "$TEST_HOME" "$TEST_USER_HOME" "$TEST_PROJECT"
+mkdir -p "$JSON_DIR"
 
 cleanup() {
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
@@ -41,7 +43,9 @@ for _ in $(seq 1 120); do
     DATABASE_PORT="${PORT_LINE##*:}"
   fi
 
-  if [[ -n "$DATABASE_PORT" ]] && docker logs "$CONTAINER_NAME" 2>&1 | grep -q "database system is ready to accept connections"; then
+  CONTAINER_LOGS="$(docker logs "$CONTAINER_NAME" 2>&1 || true)"
+
+  if [[ -n "$DATABASE_PORT" ]] && grep -q "database system is ready to accept connections" <<<"$CONTAINER_LOGS"; then
     if docker exec "$CONTAINER_NAME" bash -lc 'export PATH="/usr/lib/postgresql/15/bin:$PATH"; pg_isready -U postgres -d lgrep_cloud' >/dev/null 2>&1; then
       break
     fi
@@ -91,72 +95,81 @@ run_json() {
   "${COMMON_ENV[@]}" node "$CLI_PATH" "$@"
 }
 
-INIT_JSON="$(run_json init --mode cloud --database-url-env LGREP_DATABASE_URL --integrate none --skip-index --yes --json)"
-node --input-type=module -e '
-  const payload = JSON.parse(process.argv[1]);
-  if (!payload.success || payload.mode !== "cloud") {
-    console.error(payload);
-    process.exit(1);
-  }
-' "$INIT_JSON"
+run_json init --mode cloud --database-url-env LGREP_DATABASE_URL --integrate none --skip-index --yes --json >"$JSON_DIR/init.json"
+python3 -c '
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+if not payload.get("success") or payload.get("mode") != "cloud":
+    print(payload, file=sys.stderr)
+    raise SystemExit(1)
+' "$JSON_DIR/init.json"
 
-DOCTOR_JSON="$(run_json doctor --json)"
-node --input-type=module -e '
-  const payload = JSON.parse(process.argv[1]).data;
-  if (!payload.success) {
-    console.error(payload);
-    process.exit(1);
-  }
-  const cloudCheck = payload.checks.find((check) => check.name === "Cloud database");
-  if (!cloudCheck || cloudCheck.status !== "ok") {
-    console.error(payload.checks);
-    process.exit(1);
-  }
-' "$DOCTOR_JSON"
+run_json doctor --json >"$JSON_DIR/doctor.json"
+python3 -c '
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)["data"]
+if not payload.get("success"):
+    print(payload, file=sys.stderr)
+    raise SystemExit(1)
+cloud_check = next((check for check in payload.get("checks", []) if check.get("name") == "Cloud database"), None)
+if not cloud_check or cloud_check.get("status") != "ok":
+    print(payload.get("checks"), file=sys.stderr)
+    raise SystemExit(1)
+' "$JSON_DIR/doctor.json"
 
-LIST_BEFORE_JSON="$(run_json list --json)"
-node --input-type=module -e '
-  const payload = JSON.parse(process.argv[1]);
-  if (!Array.isArray(payload.indexes) || payload.indexes.length !== 0) {
-    console.error(payload);
-    process.exit(1);
-  }
-' "$LIST_BEFORE_JSON"
+run_json list --json >"$JSON_DIR/list-before.json"
+python3 -c '
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+if not isinstance(payload.get("indexes"), list) or len(payload["indexes"]) != 0:
+    print(payload, file=sys.stderr)
+    raise SystemExit(1)
+' "$JSON_DIR/list-before.json"
 
-INDEX_JSON="$(run_json index "$TEST_PROJECT" --name docker-cloud-smoke --json)"
-node --input-type=module -e '
-  const payload = JSON.parse(process.argv[1]);
-  if (payload.indexed !== 2 || !Array.isArray(payload.errors) || payload.errors.length !== 0) {
-    console.error(payload);
-    process.exit(1);
-  }
-' "$INDEX_JSON"
+run_json index "$TEST_PROJECT" --name docker-cloud-smoke --json >"$JSON_DIR/index.json"
+python3 -c '
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+if payload.get("indexed") != 2 or not isinstance(payload.get("errors"), list) or len(payload["errors"]) != 0:
+    print(payload, file=sys.stderr)
+    raise SystemExit(1)
+' "$JSON_DIR/index.json"
 
-LIST_AFTER_JSON="$(run_json list --json)"
-node --input-type=module -e '
-  const payload = JSON.parse(process.argv[1]);
-  if (!Array.isArray(payload.indexes) || payload.indexes.length !== 1 || payload.indexes[0].name !== "docker-cloud-smoke") {
-    console.error(payload);
-    process.exit(1);
-  }
-' "$LIST_AFTER_JSON"
+run_json list --json >"$JSON_DIR/list-after.json"
+python3 -c '
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+indexes = payload.get("indexes")
+if not isinstance(indexes, list) or len(indexes) != 1 or indexes[0].get("name") != "docker-cloud-smoke":
+    print(payload, file=sys.stderr)
+    raise SystemExit(1)
+' "$JSON_DIR/list-after.json"
 
-DEFINITION_JSON="$(run_json search --definition greetUser -i docker-cloud-smoke --json)"
-node --input-type=module -e '
-  const payload = JSON.parse(process.argv[1]);
-  if (payload.count !== 1 || !payload.definitions?.[0]?.file?.endsWith("/auth.ts")) {
-    console.error(payload);
-    process.exit(1);
-  }
-' "$DEFINITION_JSON"
+run_json search --definition greetUser -i docker-cloud-smoke --json >"$JSON_DIR/definition.json"
+python3 -c '
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+definitions = payload.get("definitions") or []
+if payload.get("count") != 1 or not definitions or not definitions[0].get("file", "").endswith("/auth.ts"):
+    print(payload, file=sys.stderr)
+    raise SystemExit(1)
+' "$JSON_DIR/definition.json"
 
-USAGES_JSON="$(run_json search --usages greetUser -i docker-cloud-smoke --json)"
-node --input-type=module -e '
-  const payload = JSON.parse(process.argv[1]);
-  if (payload.count !== 1 || !payload.usages?.[0]?.file?.endsWith("/app.ts")) {
-    console.error(payload);
-    process.exit(1);
-  }
-' "$USAGES_JSON"
+run_json search --usages greetUser -i docker-cloud-smoke --json >"$JSON_DIR/usages.json"
+python3 -c '
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+usages = payload.get("usages") or []
+if payload.get("count") != 1 or not usages or not usages[0].get("file", "").endswith("/app.ts"):
+    print(payload, file=sys.stderr)
+    raise SystemExit(1)
+' "$JSON_DIR/usages.json"
 
 echo "Cloud smoke passed against Postgres on port $DATABASE_PORT"
