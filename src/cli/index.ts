@@ -55,6 +55,7 @@ import {
 import { runServerStartCommand, runServerStatusCommand } from './commands/server.js';
 import { runServerTokenCreateCommand, runServerTokenListCommand } from './commands/server-token.js';
 import { runServerBootstrapCommand } from './commands/server-bootstrap.js';
+import { runServerInstallRemoteCommand } from './commands/server-install-remote.js';
 import { runGcCommand } from './commands/gc.js';
 import {
   runProfileCreateCommand,
@@ -1348,19 +1349,25 @@ program
   .command('install')
   .description('Install lgrep integration for Claude, Codex, or MCP')
   .option('-t, --target <target>', 'Integration target (claude, codex, mcp, all)', 'claude')
+  .option('--global', 'Install user-global Claude/Codex guidance instead of only repo-local guidance')
   .option('--skip-skill', 'Do not create the skill')
   .option('--skip-hook', 'Do not add SessionStart hook')
   .option('--add-to-claude-md', 'Also add lgrep section to ~/.claude/CLAUDE.md')
   .option('--add-to-project', 'Also add lgrep section to project CLAUDE.md')
+  .option('--server-url <url>', 'Persist a hosted query server URL in the active lgrep profile')
+  .option('--server-auth-token <token>', 'Persist a hosted bearer token in the active lgrep profile')
   .option('-f, --force', 'Overwrite existing MCP configuration when target includes mcp')
   .option('-y, --yes', 'Skip confirmation prompts')
   .option('-j, --json', 'Output as JSON')
   .action(async (options: {
     target?: 'claude' | 'codex' | 'mcp' | 'all';
+    global?: boolean;
     skipSkill?: boolean;
     skipHook?: boolean;
     addToClaudeMd?: boolean;
     addToProject?: boolean;
+    serverUrl?: string;
+    serverAuthToken?: string;
     force?: boolean;
     yes?: boolean;
     json?: boolean;
@@ -1368,10 +1375,13 @@ program
     try {
       const result = await runInstallCommand({
         target: options.target,
+        global: options.global,
         skipSkill: options.skipSkill,
         skipHook: options.skipHook,
         addToClaudeMd: options.addToClaudeMd,
         addToProject: options.addToProject,
+        serverUrl: options.serverUrl,
+        serverAuthToken: options.serverAuthToken,
         force: options.force,
         yes: options.yes,
         json: options.json,
@@ -1390,6 +1400,12 @@ program
       // Success output
       console.log('\nInstallation complete!');
       console.log(`  Target: ${result.target}`);
+      if (result.configuredServerUrl) {
+        console.log(`  Hosted server: ${result.configuredServerUrl}`);
+      }
+      if (result.clientConfigUpdated) {
+        console.log(`  ✓ Client config updated at ${result.clientConfigPath}`);
+      }
 
       if ((result.targetsApplied.includes('claude')) && !options.skipSkill) {
         if (result.skillCreated) {
@@ -1428,7 +1444,11 @@ program
       }
 
       if (result.targetsApplied.includes('codex')) {
-        if (result.codexProjectUpdated) {
+        if (result.codexUserUpdated) {
+          console.log(`  ✓ Global AGENTS.md updated at ${result.codexUserPath}`);
+        } else if (result.codexUserAlreadyHasLgrep) {
+          console.log(`  ○ Global AGENTS.md already has lgrep guidance at ${result.codexUserPath}`);
+        } else if (result.codexProjectUpdated) {
           console.log(`  ✓ AGENTS.md updated at ${result.codexProjectPath}`);
         } else if (result.codexProjectAlreadyHasLgrep) {
           console.log(`  ○ AGENTS.md already has lgrep guidance at ${result.codexProjectPath}`);
@@ -2518,6 +2538,97 @@ serverCmd
       for (const command of result.client.exampleCommands) {
         console.log(`  ${command}`);
       }
+      if (result.notes.length > 0) {
+        console.log('\nNotes');
+        for (const note of result.notes) {
+          console.log(`  - ${note}`);
+        }
+      }
+      console.log('');
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+serverCmd
+  .command('install-remote <sshTarget>')
+  .description('Provision a hosted lgrep server over SSH and optionally configure this machine to use it globally')
+  .requiredOption('--server-url <url>', 'Public URL that local clients should use for the hosted server')
+  .option('--database-url <url>', 'Postgres URL for the remote service (otherwise read from LGREP_DATABASE_URL)')
+  .option('--database-url-env <name>', 'Environment variable holding the Postgres URL locally', 'LGREP_DATABASE_URL')
+  .option('--profile <name>', 'Remote lgrep profile name to initialize', 'cloud')
+  .option('--service-name <name>', 'Service name for launchd/systemd', 'lgrep-server')
+  .option('--port <port>', 'Remote hosted query server port', '8420')
+  .option('--token-label <label>', 'Label for the remotely provisioned bearer token')
+  .option('--install-target <target>', 'Local install target after provisioning (claude, codex, mcp, all)', 'all')
+  .option('--skip-local-install', 'Do not update this machine after provisioning the remote host')
+  .option('-f, --force', 'Overwrite existing MCP configuration if local install includes mcp')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (sshTarget: string, options: {
+    serverUrl: string;
+    databaseUrl?: string;
+    databaseUrlEnv?: string;
+    profile?: string;
+    serviceName?: string;
+    port?: string;
+    tokenLabel?: string;
+    installTarget?: 'claude' | 'codex' | 'mcp' | 'all';
+    skipLocalInstall?: boolean;
+    force?: boolean;
+    json?: boolean;
+  }) => {
+    try {
+      const result = await runServerInstallRemoteCommand({
+        sshTarget,
+        serverUrl: options.serverUrl,
+        databaseUrl: options.databaseUrl,
+        databaseUrlEnv: options.databaseUrlEnv,
+        remoteProfile: options.profile,
+        serviceName: options.serviceName,
+        port: options.port ? parseInt(options.port, 10) : undefined,
+        tokenLabel: options.tokenLabel,
+        installTarget: options.installTarget,
+        skipLocalInstall: options.skipLocalInstall,
+        force: options.force,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log('\nRemote hosted install complete.\n');
+      console.log(`  SSH target: ${result.sshTarget}`);
+      console.log(`  Package: ${result.packageSpecifier}`);
+      console.log(`  Hosted URL: ${result.serverUrl}`);
+      console.log(`  Remote service: ${result.remote.serviceName}`);
+      console.log(`  Service manager: ${result.remote.serviceManager}`);
+      console.log(`  Service path: ${result.remote.servicePath}`);
+      console.log(`  Start script: ${result.remote.startScript}`);
+      console.log(`  Token store: ${result.remote.tokenFile}`);
+      console.log(`  Health URL: ${result.remote.healthUrl}`);
+
+      if (result.localInstall) {
+        console.log('\nLocal machine');
+        if (result.localInstall.clientConfigPath) {
+          console.log(`  Client config: ${result.localInstall.clientConfigPath}`);
+        }
+        if (result.localInstall.userClaudeMdPath) {
+          console.log(`  Claude guidance: ${result.localInstall.userClaudeMdPath}`);
+        }
+        if (result.localInstall.codexUserPath) {
+          console.log(`  Codex guidance: ${result.localInstall.codexUserPath}`);
+        }
+        if (result.localInstall.mcpSettingsPath) {
+          console.log(`  MCP config: ${result.localInstall.mcpSettingsPath}`);
+        }
+      }
+
       if (result.notes.length > 0) {
         console.log('\nNotes');
         for (const note of result.notes) {

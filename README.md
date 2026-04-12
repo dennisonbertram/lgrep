@@ -47,16 +47,27 @@ lgrep install --target claude
 lgrep install --target codex
 lgrep install --target mcp
 lgrep install --target all
+lgrep install --target all --global --server-url https://lgrep.example.com --server-auth-token <token>
 ```
 
 Targets:
 
 - `claude` installs the Claude skill and SessionStart hook
-- `codex` writes project guidance into `AGENTS.md`
+- `codex` writes guidance into `AGENTS.md` or `~/.codex/AGENTS.md` when `--global` is used
 - `mcp` configures lgrep as an MCP server
 - `all` installs all three
 
 In local mode, the SessionStart hook can start local watchers automatically. In cloud mode, the hook exits immediately and relies on the shared remote index.
+
+For a machine-wide hosted setup, use:
+
+```bash
+lgrep install --target all --global \
+  --server-url https://lgrep.example.com \
+  --server-auth-token <token>
+```
+
+That persists the hosted URL and token into the active lgrep profile, updates `~/.claude/CLAUDE.md`, updates `~/.codex/AGENTS.md`, and carries the same hosted settings into the MCP config.
 
 ## Commands
 
@@ -77,6 +88,7 @@ In local mode, the SessionStart hook can start local watchers automatically. In 
 | `lgrep profile` | Manage named local/cloud profiles |
 | `lgrep server` | Run or inspect the shared hosted query service |
 | `lgrep server bootstrap` | Bootstrap a hosted project, worktrees, and token |
+| `lgrep server install-remote <ssh-target>` | Provision a self-hosted server over SSH and optionally configure this machine globally |
 | `lgrep server token` | Create and inspect scoped hosted query tokens |
 
 ### Code Intelligence
@@ -151,17 +163,53 @@ See [docs/guides/remote-storage.md](docs/guides/remote-storage.md) for setup.
 
 You can also run lgrep behind a shared HTTP query service instead of giving every agent direct database credentials.
 
-Fastest setup:
+### Fastest Self-Hosted Path
+
+For a Mac mini, Hetzner box, or any SSH-accessible machine:
 
 ```bash
 export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
+
+lgrep server install-remote user@host \
+  --server-url https://lgrep.example.com
+```
+
+That will:
+
+- install `lgrep` on the remote host
+- install a supported Node runtime when the host's system `node` is too old
+- install Linux build/runtime prerequisites when the host needs them
+- provision a `launchd`, working `systemd`, or `tmux` service runner
+- create a remote token-store file for hosted auth
+- configure this machine globally for Claude, Codex, and MCP unless you pass `--skip-local-install`
+
+For the exact Hetzner/Mac-mini runbook, including the tmux tunnel/bootstrap flow for many local worktrees, see [docs/guides/self-hosted-ssh-runbook.md](docs/guides/self-hosted-ssh-runbook.md).
+
+### Project Bootstrap
+
+Then register a repo and its worktrees in the same hosted Postgres:
+
+```bash
+export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
+
 lgrep server bootstrap /path/to/repo \
   --project repo-main \
   --branch main \
   --worktree 'feature-login|/path/to/repo-feature-login|feature/login'
 ```
 
-Then start the server with the command it prints, and on clients or agents:
+### Client Usage
+
+After a global install, this machine can just use `lgrep` directly:
+
+```bash
+lgrep project info repo-main
+lgrep worktree list --project repo-main
+lgrep search "authentication flow" --project repo-main
+lgrep callers createSession --project repo-main --worktree feature-login
+```
+
+If you want to configure another client machine manually:
 
 ```bash
 export LGREP_SERVER_URL="https://lgrep.example.com"
@@ -174,9 +222,17 @@ lgrep impact createSession --project repo-main --worktree feature-login
 lgrep context "trace session token flow" --project repo-main --worktree feature-login
 ```
 
-If you want MCP clients to use the hosted service, export the same env vars before running `lgrep install --target mcp`. The generated MCP config will carry `LGREP_SERVER_URL` and `LGREP_SERVER_AUTH_TOKEN` through to the stdio MCP server.
+Hosted semantic `search` and hosted `context` need a real embedding provider on the server, such as `OPENAI_API_KEY`. Hosted `search --definition` and `search --usages` remain database-backed client flows today.
 
-Today this hosted path is a bearer-token-protected, single-tenant query layer for project/worktree discovery, semantic search, callers, impact, and context packages. For Railway and other remote deployments today, use the service-wide `LGREP_SERVER_AUTH_TOKEN`. The bootstrap-created scoped token is still filesystem-backed and is best for self-hosted deployments where the query server shares the same token store. See [docs/guides/hosted-query-service.md](docs/guides/hosted-query-service.md) for the hosted multi-worktree workflow, Railway deploy path, and current limits.
+If you want MCP clients to use the hosted service without shell exports, run:
+
+```bash
+lgrep install --target mcp --global \
+  --server-url https://lgrep.example.com \
+  --server-auth-token <token>
+```
+
+Today this hosted path is a bearer-token-protected, single-tenant query layer for project/worktree discovery, semantic search, callers, impact, and context packages. For self-hosted SSH deployments, `lgrep server install-remote` provisions a filesystem-backed token store on the remote host, which is the recommended auth path today. For Railway and other stateless remote deployments, keep using the service-wide `LGREP_SERVER_AUTH_TOKEN`. See [docs/guides/hosted-query-service.md](docs/guides/hosted-query-service.md) for the hosted multi-worktree workflow, SSH self-host path, Railway deploy path, and current limits.
 
 ### If You Want To Use Hosted Mode Today
 

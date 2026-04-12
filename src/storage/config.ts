@@ -94,6 +94,10 @@ export interface LgrepConfig {
   cacheMaxEntries: number;
   /** TTL for cache entries in hours (0 = disabled) */
   cacheTtlHours: number;
+  /** Hosted lgrep query server URL for remote reads */
+  serverUrl: string;
+  /** Hosted lgrep bearer token for remote reads */
+  serverAuthToken: string;
 }
 
 /**
@@ -131,6 +135,8 @@ export const DEFAULT_CONFIG: LgrepConfig = {
   cacheEnabled: true,
   cacheMaxEntries: 50000,
   cacheTtlHours: 0,
+  serverUrl: '',
+  serverAuthToken: '',
 };
 
 /**
@@ -154,6 +160,31 @@ export async function loadConfig(): Promise<LgrepConfig> {
       return { ...DEFAULT_CONFIG };
     }
     // Re-throw other errors
+    throw error;
+  }
+}
+
+/**
+ * Load configuration from file synchronously, merging with defaults.
+ *
+ * This is useful for fast CLI startup and helpers that need config access
+ * without threading async calls through every command path.
+ */
+export function loadConfigSync(): LgrepConfig {
+  const configPath = getConfigPath();
+
+  try {
+    const content = readFileSync(configPath, 'utf-8');
+    const parsed = JSON.parse(content) as Partial<LgrepConfig>;
+
+    return {
+      ...DEFAULT_CONFIG,
+      ...parsed,
+    };
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') {
+      return { ...DEFAULT_CONFIG };
+    }
     throw error;
   }
 }

@@ -35,6 +35,15 @@ If you want agents to query lgrep without direct database credentials, run the s
 ```bash
 export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
 
+lgrep server install-remote user@host \
+  --server-url https://lgrep.example.com
+```
+
+Then bootstrap the repo and worktrees into that hosted Postgres:
+
+```bash
+export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
+
 lgrep server bootstrap /path/to/repo --project repo-main --branch main
 ```
 
@@ -52,7 +61,7 @@ lgrep impact createSession --project repo-main --worktree feature-login
 lgrep context "trace session token flow" --project repo-main --worktree feature-login
 ```
 
-This hosted path is currently a single-tenant query layer. For Railway and other remote deployments today, use the shared `LGREP_SERVER_AUTH_TOKEN` service secret. The bootstrap-created scoped token is still filesystem-backed and best for self-hosted deployments that share the same token store. See [hosted-query-service.md](./hosted-query-service.md) for the supported workflow, hosted MCP setup, Railway deployment path, and current limitations.
+This hosted path is currently a single-tenant query layer. For self-hosted SSH deployments, `lgrep server install-remote` provisions the remote token store for you, installs Linux prerequisites when needed, installs a supported Node runtime when the system one is too old, and falls back to `tmux` on hosts without usable `systemd`; it is the preferred auth path today. For Railway and other stateless remote deployments, use the shared `LGREP_SERVER_AUTH_TOKEN` service secret. See [hosted-query-service.md](./hosted-query-service.md) for the supported workflow, global client install path, hosted MCP setup, Railway deployment path, and current limitations, and [self-hosted-ssh-runbook.md](./self-hosted-ssh-runbook.md) for the step-by-step Hetzner/Mac-mini runbook.
 
 If your real goal is "one hosted Postgres database with many worktrees under one project", start with [hosted-query-service.md](./hosted-query-service.md). That guide is the clearest end-to-end path for the current hosted setup.
 
@@ -194,7 +203,7 @@ After rollback, local indexes continue to work as before. Remote indexes remain 
 - `stats` only reports database directory size in local mode.
 - `doctor` and `clean` now query the storage layer instead of assuming a local `db` directory.
 - The MCP server uses the same storage config resolution as the CLI.
-- The hosted query service uses `LGREP_SERVER_AUTH_TOKEN` for bearer-token protection.
+- The hosted query service can use either a remote token-store file or the shared `LGREP_SERVER_AUTH_TOKEN`, depending on deployment style.
 - The Postgres index and the Postgres cache can share one database or use separate databases.
 - The remote cache currently uses environment-variable configuration for the Postgres connection string.
 - S3/R2 remains supported, but it is now the secondary path rather than the default recommendation.

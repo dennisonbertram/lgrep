@@ -3,6 +3,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { runInstallMcpCommand } from './install-mcp.js';
+import { loadConfig, saveConfig } from '../../storage/config.js';
+import { getConfigPath } from '../utils/paths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +20,9 @@ export interface InstallOptions {
   skipClaudeMd?: boolean;
   addToClaudeMd?: boolean;
   addToProject?: boolean;
+  global?: boolean;
+  serverUrl?: string;
+  serverAuthToken?: string;
   force?: boolean;
   yes?: boolean;
   json?: boolean;
@@ -42,12 +47,19 @@ export interface InstallResult {
   projectClaudeUpdated: boolean;
   projectClaudeAlreadyHasLgrep?: boolean;
   projectClaudePath?: string;
+  codexUserUpdated: boolean;
+  codexUserAlreadyHasLgrep?: boolean;
+  codexUserPath?: string;
   codexProjectUpdated: boolean;
   codexProjectAlreadyHasLgrep?: boolean;
   codexProjectPath?: string;
   mcpConfigured: boolean;
   mcpAlreadyConfigured?: boolean;
   mcpSettingsPath?: string;
+  clientConfigUpdated: boolean;
+  clientConfigPath?: string;
+  configuredServerUrl?: string;
+  storedServerAuthToken?: boolean;
 }
 
 interface Settings {
@@ -140,7 +152,15 @@ async function upsertManagedSection(
   defaultTitle: string
 ): Promise<{ updated: boolean; alreadyHasLgrep: boolean; path: string }> {
   const template = (await loadTemplate(templateName)).trim();
-  const managedBlock = `${LGREP_SECTION_START}\n${template}\n${LGREP_SECTION_END}`;
+  return upsertManagedSectionContent(filePath, template, defaultTitle);
+}
+
+async function upsertManagedSectionContent(
+  filePath: string,
+  sectionContent: string,
+  defaultTitle: string
+): Promise<{ updated: boolean; alreadyHasLgrep: boolean; path: string }> {
+  const managedBlock = `${LGREP_SECTION_START}\n${sectionContent.trim()}\n${LGREP_SECTION_END}`;
 
   if (!(await fileExists(filePath))) {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -170,6 +190,25 @@ async function upsertManagedSection(
   const newContent = `${content.trimEnd()}\n\n${managedBlock}\n`;
   await fs.writeFile(filePath, newContent);
   return { updated: true, alreadyHasLgrep: false, path: filePath };
+}
+
+function buildRemoteGuidance(serverUrl: string): string {
+  return [
+    '### Hosted Remote Service',
+    '',
+    `- This machine is configured to use the hosted lgrep service at \`${serverUrl}\`.`,
+    '- Prefer the hosted project/worktree data when it is available.',
+    '- Do not ask the user to re-export `LGREP_SERVER_URL` or `LGREP_SERVER_AUTH_TOKEN` if lgrep is already configured globally.',
+  ].join('\n');
+}
+
+async function renderInstructionSection(templateName: string, serverUrl?: string): Promise<string> {
+  const template = (await loadTemplate(templateName)).trim();
+  if (!serverUrl) {
+    return template;
+  }
+
+  return `${template}\n\n${buildRemoteGuidance(serverUrl.trim())}`;
 }
 
 async function createSkill(homedir: string) {
@@ -256,28 +295,74 @@ async function addSessionStartHook(homedir: string) {
   };
 }
 
-async function updateUserClaudeMd(homedir: string) {
-  return await upsertManagedSection(
+async function updateUserClaudeMd(homedir: string, serverUrl?: string) {
+  return await upsertManagedSectionContent(
     path.join(homedir, '.claude', 'CLAUDE.md'),
-    'claude-md-section.md',
+    await renderInstructionSection('claude-md-section.md', serverUrl),
     '# User Configuration'
   );
 }
 
-async function updateProjectClaudeMd() {
-  return await upsertManagedSection(
+async function updateProjectClaudeMd(serverUrl?: string) {
+  return await upsertManagedSectionContent(
     path.join(process.cwd(), 'CLAUDE.md'),
-    'claude-md-section.md',
+    await renderInstructionSection('claude-md-section.md', serverUrl),
     '# Project Configuration'
   );
 }
 
-async function updateCodexProjectInstructions() {
-  return await upsertManagedSection(
+async function updateCodexProjectInstructions(serverUrl?: string) {
+  return await upsertManagedSectionContent(
     path.join(process.cwd(), 'AGENTS.md'),
-    'agents-md-section.md',
+    await renderInstructionSection('agents-md-section.md', serverUrl),
     '# Agent Guidelines'
   );
+}
+
+async function updateCodexUserInstructions(homedir: string, serverUrl?: string) {
+  return await upsertManagedSectionContent(
+    path.join(homedir, '.codex', 'AGENTS.md'),
+    await renderInstructionSection('agents-md-section.md', serverUrl),
+    '# Agent Guidelines'
+  );
+}
+
+async function persistHostedClientConfig(serverUrl?: string, serverAuthToken?: string) {
+  const normalizedUrl = serverUrl?.trim();
+  const normalizedToken = serverAuthToken?.trim();
+
+  if (!normalizedUrl && !normalizedToken) {
+    return {
+      updated: false,
+      path: getConfigPath(),
+      serverUrl: undefined,
+      storedServerAuthToken: false,
+    };
+  }
+
+  const config = await loadConfig();
+  let updated = false;
+
+  if (normalizedUrl && config.serverUrl !== normalizedUrl) {
+    config.serverUrl = normalizedUrl;
+    updated = true;
+  }
+
+  if (normalizedToken && config.serverAuthToken !== normalizedToken) {
+    config.serverAuthToken = normalizedToken;
+    updated = true;
+  }
+
+  if (updated) {
+    await saveConfig(config);
+  }
+
+  return {
+    updated,
+    path: getConfigPath(),
+    serverUrl: normalizedUrl || (config.serverUrl.trim() || undefined),
+    storedServerAuthToken: Boolean(normalizedToken || config.serverAuthToken.trim()),
+  };
 }
 
 export async function runInstallCommand(
@@ -290,7 +375,10 @@ export async function runInstallCommand(
     skipHook = false,
     addToClaudeMd = false,
     addToProject = false,
+    global: installGlobal = false,
     force = false,
+    serverUrl,
+    serverAuthToken,
   } = options;
 
   const result: InstallResult = {
@@ -301,12 +389,19 @@ export async function runInstallCommand(
     hookAdded: false,
     userClaudeMdUpdated: false,
     projectClaudeUpdated: false,
+    codexUserUpdated: false,
     codexProjectUpdated: false,
     mcpConfigured: false,
+    clientConfigUpdated: false,
   };
 
   try {
     const homedir = os.homedir();
+    const clientConfig = await persistHostedClientConfig(serverUrl, serverAuthToken);
+    result.clientConfigUpdated = clientConfig.updated;
+    result.clientConfigPath = clientConfig.path;
+    result.configuredServerUrl = clientConfig.serverUrl;
+    result.storedServerAuthToken = clientConfig.storedServerAuthToken;
 
     if (targetsApplied.includes('claude')) {
       if (!skipSkill) {
@@ -325,15 +420,15 @@ export async function runInstallCommand(
         result.settingsPath = hookResult.path;
       }
 
-      if (addToClaudeMd) {
-        const userClaudeMdResult = await updateUserClaudeMd(homedir);
+      if (addToClaudeMd || installGlobal) {
+        const userClaudeMdResult = await updateUserClaudeMd(homedir, result.configuredServerUrl);
         result.userClaudeMdUpdated = userClaudeMdResult.updated;
         result.userClaudeMdAlreadyHasLgrep = userClaudeMdResult.alreadyHasLgrep;
         result.userClaudeMdPath = userClaudeMdResult.path;
       }
 
       if (addToProject) {
-        const claudeMdResult = await updateProjectClaudeMd();
+        const claudeMdResult = await updateProjectClaudeMd(result.configuredServerUrl);
         result.projectClaudeUpdated = claudeMdResult.updated;
         result.projectClaudeAlreadyHasLgrep = claudeMdResult.alreadyHasLgrep;
         result.projectClaudePath = claudeMdResult.path;
@@ -341,14 +436,26 @@ export async function runInstallCommand(
     }
 
     if (targetsApplied.includes('codex')) {
-      const codexResult = await updateCodexProjectInstructions();
-      result.codexProjectUpdated = codexResult.updated;
-      result.codexProjectAlreadyHasLgrep = codexResult.alreadyHasLgrep;
-      result.codexProjectPath = codexResult.path;
+      if (installGlobal) {
+        const codexResult = await updateCodexUserInstructions(homedir, result.configuredServerUrl);
+        result.codexUserUpdated = codexResult.updated;
+        result.codexUserAlreadyHasLgrep = codexResult.alreadyHasLgrep;
+        result.codexUserPath = codexResult.path;
+      } else {
+        const codexResult = await updateCodexProjectInstructions(result.configuredServerUrl);
+        result.codexProjectUpdated = codexResult.updated;
+        result.codexProjectAlreadyHasLgrep = codexResult.alreadyHasLgrep;
+        result.codexProjectPath = codexResult.path;
+      }
     }
 
     if (targetsApplied.includes('mcp')) {
-      const mcpResult = await runInstallMcpCommand({ force, json: options.json });
+      const mcpResult = await runInstallMcpCommand({
+        force,
+        json: options.json,
+        serverUrl: result.configuredServerUrl,
+        serverAuthToken,
+      });
       if (!mcpResult.success) {
         throw new Error(mcpResult.error || 'Failed to configure MCP');
       }

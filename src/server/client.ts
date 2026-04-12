@@ -1,5 +1,6 @@
 import type { QueryRequest } from './query-server.js';
-import { getServerAuthToken } from './auth.js';
+import { getClientServerAuthToken } from './auth.js';
+import { loadConfigSync } from '../storage/config.js';
 
 const DEFAULT_PORT = 8420;
 
@@ -7,11 +8,17 @@ const DEFAULT_PORT = 8420;
  * Get the server URL from environment or default.
  */
 export function getServerUrl(): string | null {
-  return process.env['LGREP_SERVER_URL'] ?? null;
+  const envUrl = process.env['LGREP_SERVER_URL']?.trim();
+  if (envUrl) {
+    return envUrl;
+  }
+
+  const configUrl = loadConfigSync().serverUrl.trim();
+  return configUrl || null;
 }
 
 function createServerHeaders(): Record<string, string> {
-  const token = getServerAuthToken();
+  const token = getClientServerAuthToken();
   if (!token) {
     return {};
   }
