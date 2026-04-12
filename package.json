@@ -1,6 +1,6 @@
 {
   "name": "lgrep",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Semantic code search CLI with local and Postgres-backed cloud profiles",
   "type": "module",
   "main": "dist/index.js",
