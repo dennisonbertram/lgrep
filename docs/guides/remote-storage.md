@@ -61,7 +61,7 @@ lgrep impact createSession --project repo-main --worktree feature-login
 lgrep context "trace session token flow" --project repo-main --worktree feature-login
 ```
 
-This hosted path is currently a single-tenant query layer. For self-hosted SSH deployments, `lgrep server install-remote` provisions the remote token store for you, installs Linux prerequisites when needed, and falls back to `tmux` on hosts without usable `systemd`; it is the preferred auth path today. For Railway and other stateless remote deployments, use the shared `LGREP_SERVER_AUTH_TOKEN` service secret. See [hosted-query-service.md](./hosted-query-service.md) for the supported workflow, global client install path, hosted MCP setup, Railway deployment path, and current limitations.
+This hosted path is currently a single-tenant query layer. For self-hosted SSH deployments, `lgrep server install-remote` provisions the remote token store for you, installs Linux prerequisites when needed, installs a supported Node runtime when the system one is too old, and falls back to `tmux` on hosts without usable `systemd`; it is the preferred auth path today. For Railway and other stateless remote deployments, use the shared `LGREP_SERVER_AUTH_TOKEN` service secret. See [hosted-query-service.md](./hosted-query-service.md) for the supported workflow, global client install path, hosted MCP setup, Railway deployment path, and current limitations, and [self-hosted-ssh-runbook.md](./self-hosted-ssh-runbook.md) for the step-by-step Hetzner/Mac-mini runbook.
 
 If your real goal is "one hosted Postgres database with many worktrees under one project", start with [hosted-query-service.md](./hosted-query-service.md). That guide is the clearest end-to-end path for the current hosted setup.
 

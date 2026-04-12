@@ -102,7 +102,11 @@ describe('server install-remote command', () => {
 
     const sentScript = child.stdin.write.mock.calls[0]?.[0] as string;
     expect(sentScript).toContain('ensure_remote_prerequisites');
-    expect(sentScript).toContain('npm install -g');
+    expect(sentScript).toContain('ensure_supported_node_runtime');
+    expect(sentScript).toContain('npm install -g --legacy-peer-deps');
+    expect(sentScript).toContain('NODE_VERSION="v20.19.0"');
+    expect(sentScript).toContain('export NPM_CONFIG_PREFIX="$HOME/.local"');
+    expect(sentScript).toContain('HOME="$(getent passwd "$(id -u)" | cut -d: -f6)"');
     expect(sentScript).toContain('launchctl bootstrap');
     expect(sentScript).toContain('systemctl --user enable --now');
     expect(sentScript).toContain('tmux new-session -d -s "$SERVICE_NAME"');

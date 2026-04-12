@@ -165,7 +165,7 @@ You can also run lgrep behind a shared HTTP query service instead of giving ever
 
 ### Fastest Self-Hosted Path
 
-For a Mac mini, Hetzner box, or any SSH-accessible machine with Node.js and npm installed:
+For a Mac mini, Hetzner box, or any SSH-accessible machine:
 
 ```bash
 export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
@@ -177,10 +177,13 @@ lgrep server install-remote user@host \
 That will:
 
 - install `lgrep` on the remote host
+- install a supported Node runtime when the host's system `node` is too old
 - install Linux build/runtime prerequisites when the host needs them
 - provision a `launchd`, working `systemd`, or `tmux` service runner
 - create a remote token-store file for hosted auth
 - configure this machine globally for Claude, Codex, and MCP unless you pass `--skip-local-install`
+
+For the exact Hetzner/Mac-mini runbook, including the tmux tunnel/bootstrap flow for many local worktrees, see [docs/guides/self-hosted-ssh-runbook.md](docs/guides/self-hosted-ssh-runbook.md).
 
 ### Project Bootstrap
 
@@ -218,6 +221,8 @@ lgrep callers createSession --project repo-main --worktree feature-login
 lgrep impact createSession --project repo-main --worktree feature-login
 lgrep context "trace session token flow" --project repo-main --worktree feature-login
 ```
+
+Hosted semantic `search` and hosted `context` need a real embedding provider on the server, such as `OPENAI_API_KEY`. Hosted `search --definition` and `search --usages` remain database-backed client flows today.
 
 If you want MCP clients to use the hosted service without shell exports, run:
 

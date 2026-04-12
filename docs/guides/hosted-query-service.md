@@ -49,8 +49,9 @@ This is the recommended deployment path today for a single developer who wants a
 Prerequisites on the remote host:
 
 - SSH access
-- Node.js and npm installed
 - network access to the Postgres instance
+
+`lgrep server install-remote` now installs Linux build/runtime prerequisites when needed and will provision a supported Node runtime automatically if the host's system `node` is too old.
 
 Run:
 
@@ -65,10 +66,13 @@ What this does:
 
 - installs the published `lgrep` package on the remote host
 - installs Linux build/runtime prerequisites if the host is missing them
+- installs a supported Node runtime when the remote system `node` is too old
 - writes a start script under `~/.lgrep-server/<service-name>/`
 - provisions `launchd` on macOS, a working `systemd` service when available, or a `tmux` fallback on minimal/container-style Linux hosts
 - creates a remote token-store JSON file for hosted auth
 - configures this machine globally for Claude, Codex, and MCP unless you pass `--skip-local-install`
+
+For the full proven Hetzner/self-hosted runbook, including Docker Postgres, the tmux SSH tunnel, and multi-worktree bootstrap commands, see [self-hosted-ssh-runbook.md](./self-hosted-ssh-runbook.md).
 
 If you only want the remote host provisioned and do not want local machine changes:
 
@@ -226,6 +230,8 @@ lgrep callers createSession --project repo-main --worktree feature-login
 lgrep impact createSession --project repo-main --worktree feature-login
 lgrep context "trace session token flow" --project repo-main --worktree feature-login
 ```
+
+Hosted semantic `search` and hosted `context` require a real embedding provider on the server. If the server does not have an embedding provider configured, those calls will fail with the provider-missing error. `lgrep search --definition ...` and `lgrep search --usages ...` remain local database-backed flows today.
 
 When `LGREP_SERVER_URL` is set, `lgrep search` will use the hosted service for semantic search if:
 
