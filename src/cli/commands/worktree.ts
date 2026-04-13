@@ -51,11 +51,71 @@ import type { CodeSymbol, CodeDependency, CallEdge } from '../../types/code-inte
 import {
   ensureProjectTables,
   getProject,
+  type Project,
 } from '../../storage/project.js';
 import { withWorktreeLock } from '../../storage/locks.js';
 import { createSpinner } from '../utils/progress.js';
 import { getServerUrl, queryServer } from '../../server/client.js';
-import type { QueryDiffResponse, QueryWorktreesResponse } from '../../server/query-server.js';
+import type {
+  QueryDiffResponse,
+  QueryProjectsResponse,
+  QueryWorktreesResponse,
+} from '../../server/query-server.js';
+import {
+  resolveHostedScopeForDirectory,
+  type HostedScopeMatch,
+} from '../utils/hosted-auto-detect.js';
+import {
+  writeHostedWorktreeBinding,
+  type HostedWorktreeBindingReadResult,
+} from '../utils/hosted-worktree-binding.js';
+import { getGitContext } from '../utils/git-context.js';
+
+const HOSTED_SCOPE_ERROR =
+  'No hosted project/worktree match found for the current directory. Either:\n' +
+  '  1. Use --project <name> and optionally --worktree <name>\n' +
+  '  2. Run `lgrep worktree resolve` to confirm the active hosted binding\n' +
+  '  3. Run `lgrep worktree bind --project <name> --worktree <name>` to create an explicit local binding\n' +
+  '  4. Run the command from a git worktree whose branch matches a hosted worktree\n' +
+  '  5. Use --index <name> to query a local index instead';
+
+async function persistHostedBindingForWorktree(
+  directory: string,
+  project: Pick<Project, 'id' | 'name'> | null,
+  worktree: Pick<Worktree, 'id' | 'name' | 'branch'>,
+): Promise<HostedWorktreeBindingReadResult | null> {
+  if (!project) {
+    return null;
+  }
+
+  try {
+    return await writeHostedWorktreeBinding(directory, {
+      projectId: project.id,
+      projectName: project.name,
+      worktreeId: worktree.id,
+      worktreeName: worktree.name,
+      branch: worktree.branch ?? undefined,
+      serverUrl: getServerUrl(),
+    });
+  } catch (err) {
+    if ((err as Error).message.includes('not inside a git repository')) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function resolveProjectForBinding(
+  db: Awaited<ReturnType<typeof openConfiguredDatabase>>,
+  projectNameOrId?: string,
+): Promise<Project | null> {
+  if (!projectNameOrId) {
+    return null;
+  }
+
+  await ensureProjectTables(db);
+  return await getProject(db, projectNameOrId);
+}
 
 // ---------------------------------------------------------------------------
 // worktree create
@@ -99,6 +159,7 @@ export async function runWorktreeCreateCommand(
 
     try {
       // Resolve project if specified
+      let project: Project | null = null;
       let projectId: string | undefined;
       let effectiveModel = config.model;
       let effectiveChunkSize = config.chunkSize;
@@ -111,6 +172,7 @@ export async function runWorktreeCreateCommand(
         await ensureProjectTables(db);
         const proj = await getProject(db, opts.project);
         if (!proj) throw new Error(`Project "${opts.project}" not found`);
+        project = proj;
         projectId = proj.id;
         effectiveModel = proj.model;
         effectiveChunkSize = proj.chunkMaxTokens;
@@ -340,6 +402,8 @@ export async function runWorktreeCreateCommand(
         await upsertManifestEntries(db, wt.id, manifestEntries);
         await refreshWorktreeCounts(db, wt.id);
         await updateWorktreeStatus(db, wt.id, 'ready');
+        const finalWorktree = (await getWorktree(db, wt.id))!;
+        await persistHostedBindingForWorktree(absolutePath, project, finalWorktree);
 
         spinner?.succeed(
           `Created worktree "${opts.name}": ${files.length} files, ${totalChunks} chunks (${chunksReused} reused)`,
@@ -347,7 +411,7 @@ export async function runWorktreeCreateCommand(
 
         return {
           success: true,
-          worktree: (await getWorktree(db, wt.id))!,
+          worktree: finalWorktree,
           filesProcessed: files.length,
           chunksCreated: totalChunks - chunksReused,
           chunksReused,
@@ -414,11 +478,13 @@ export async function runWorktreeForkCommand(
 
       // Resolve project scope for parent lookup
       let projectId: string | undefined;
+      let project: Project | null = null;
       let effectiveExcludes = config.excludes;
       if (opts.project) {
         await ensureProjectTables(db);
         const proj = await getProject(db, opts.project);
         if (!proj) throw new Error(`Project "${opts.project}" not found`);
+        project = proj;
         projectId = proj.id;
       }
 
@@ -426,8 +492,7 @@ export async function runWorktreeForkCommand(
       const parent = await getWorktree(db, opts.parent, projectId ? { projectId } : undefined);
       if (!parent) throw new Error(`Parent worktree "${opts.parent}" not found`);
       if (parent.projectId) {
-        await ensureProjectTables(db);
-        const project = await getProject(db, parent.projectId);
+        project = await resolveProjectForBinding(db, parent.projectId);
         if (project?.excludePatterns.length) {
           effectiveExcludes = [...config.excludes, ...project.excludePatterns];
         }
@@ -658,6 +723,8 @@ export async function runWorktreeForkCommand(
 
         await refreshWorktreeCounts(db, child.id);
         await updateWorktreeStatus(db, child.id, 'ready');
+        const finalWorktree = (await getWorktree(db, child.id))!;
+        await persistHostedBindingForWorktree(absolutePath, project, finalWorktree);
 
         spinner?.succeed(
           `Forked "${opts.parent}" → "${opts.name}": ${added.length} added, ${modified.length} modified, ${deleted.length} deleted (${chunksReused} chunks reused)`,
@@ -665,7 +732,7 @@ export async function runWorktreeForkCommand(
 
         return {
           success: true,
-          worktree: (await getWorktree(db, child.id))!,
+          worktree: finalWorktree,
           filesChanged: modified.length,
           filesAdded: added.length,
           filesDeleted: deleted.length,
@@ -719,6 +786,174 @@ export async function runWorktreeListCommand(
   } finally {
     await db.close();
   }
+}
+
+// ---------------------------------------------------------------------------
+// worktree resolve / bind
+// ---------------------------------------------------------------------------
+
+export interface WorktreeResolveOptions {
+  path?: string;
+  json?: boolean;
+}
+
+export interface WorktreeResolveResult {
+  success: boolean;
+  project?: string;
+  worktree?: string;
+  source?: HostedScopeMatch['source'];
+  bindingPath?: string;
+  repoRoot?: string;
+  branch?: string;
+  serverUrl?: string | null;
+  error?: string;
+}
+
+export interface WorktreeBindOptions extends WorktreeResolveOptions {
+  project: string;
+  worktree: string;
+  force?: boolean;
+}
+
+export interface WorktreeBindResult extends WorktreeResolveResult {
+  bindingPath: string;
+}
+
+async function resolveBindableHostedTarget(
+  projectName: string,
+  worktreeName: string,
+): Promise<{
+  project: Pick<Project, 'id' | 'name'>;
+  worktree: Pick<Worktree, 'id' | 'name' | 'branch'>;
+}> {
+  if (getServerUrl()) {
+    const projects = await queryServer({
+      method: 'projects',
+      params: {},
+    }) as QueryProjectsResponse;
+    const project = projects.projects.find((entry) => entry.name === projectName);
+    if (!project) {
+      throw new Error(`Hosted project "${projectName}" not found.`);
+    }
+
+    const worktrees = await queryServer({
+      method: 'worktrees',
+      project: project.name,
+      params: {},
+    }) as QueryWorktreesResponse;
+    const worktree = worktrees.worktrees.find((entry) => entry.name === worktreeName);
+    if (!worktree) {
+      throw new Error(`Hosted worktree "${worktreeName}" not found in project "${project.name}".`);
+    }
+
+    return {
+      project: {
+        id: project.id,
+        name: project.name,
+      },
+      worktree: {
+        id: worktree.id,
+        name: worktree.name,
+        branch: worktree.branch,
+      },
+    };
+  }
+
+  const db = await openConfiguredDatabase();
+  try {
+    await ensureProjectTables(db);
+    await ensureWorktreeTables(db);
+    const project = await getProject(db, projectName);
+    if (!project) {
+      throw new Error(`Project "${projectName}" not found.`);
+    }
+
+    const worktree = await getWorktree(db, worktreeName, { projectId: project.id });
+    if (!worktree) {
+      throw new Error(`Worktree "${worktreeName}" not found in project "${project.name}".`);
+    }
+
+    return {
+      project: {
+        id: project.id,
+        name: project.name,
+      },
+      worktree: {
+        id: worktree.id,
+        name: worktree.name,
+        branch: worktree.branch,
+      },
+    };
+  } finally {
+    await db.close();
+  }
+}
+
+export async function runWorktreeResolveCommand(
+  opts: WorktreeResolveOptions = {},
+): Promise<WorktreeResolveResult> {
+  const targetPath = resolve(opts.path ?? process.cwd());
+  const git = getGitContext(targetPath);
+  const scope = await resolveHostedScopeForDirectory(targetPath);
+
+  if (!scope) {
+    return {
+      success: false,
+      repoRoot: git?.repoRoot,
+      branch: git?.branch,
+      serverUrl: getServerUrl(),
+      error: HOSTED_SCOPE_ERROR,
+    };
+  }
+
+  return {
+    success: true,
+    project: scope.project,
+    worktree: scope.worktree,
+    source: scope.source,
+    bindingPath: scope.bindingPath,
+    repoRoot: git?.repoRoot,
+    branch: git?.branch,
+    serverUrl: getServerUrl(),
+  };
+}
+
+export async function runWorktreeBindCommand(
+  opts: WorktreeBindOptions,
+): Promise<WorktreeBindResult> {
+  const targetPath = resolve(opts.path ?? process.cwd());
+  const git = getGitContext(targetPath);
+  if (!git) {
+    throw new Error(`"${targetPath}" is not inside a git repository, so lgrep cannot bind it to a hosted worktree.`);
+  }
+
+  const target = await resolveBindableHostedTarget(opts.project, opts.worktree);
+  if (!opts.force && target.worktree.branch && git.branch && target.worktree.branch !== git.branch) {
+    throw new Error(
+      `Current git branch "${git.branch}" does not match hosted worktree branch "${target.worktree.branch}". ` +
+      'Bind the matching hosted worktree or pass --force if you intentionally want a non-matching binding.'
+    );
+  }
+
+  const binding = await writeHostedWorktreeBinding(targetPath, {
+    projectId: target.project.id,
+    projectName: target.project.name,
+    worktreeId: target.worktree.id,
+    worktreeName: target.worktree.name,
+    branch: target.worktree.branch ?? undefined,
+    serverUrl: getServerUrl(),
+  });
+
+  return {
+    success: true,
+    project: binding.binding.projectName,
+    worktree: binding.binding.worktreeName,
+    source: 'binding',
+    bindingPath: binding.path,
+    repoRoot: binding.git.repoRoot,
+    branch: binding.binding.branch,
+    serverUrl: getServerUrl(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -810,13 +1045,10 @@ export async function runWorktreeUpdateCommand(
       if (!wt) throw new Error(`Worktree "${nameOrId}" not found`);
       if (!wt.rootPath) throw new Error(`Worktree "${nameOrId}" has no root path`);
       const worktreeRoot = wt.rootPath;
+      const project = wt.projectId ? await resolveProjectForBinding(db, wt.projectId) : null;
       let effectiveExcludes = config.excludes;
-      if (wt.projectId) {
-        await ensureProjectTables(db);
-        const project = await getProject(db, wt.projectId);
-        if (project?.excludePatterns.length) {
-          effectiveExcludes = [...config.excludes, ...project.excludePatterns];
-        }
+      if (project?.excludePatterns.length) {
+        effectiveExcludes = [...config.excludes, ...project.excludePatterns];
       }
 
       const performUpdate = async (): Promise<WorktreeUpdateResult> => {
@@ -860,6 +1092,7 @@ export async function runWorktreeUpdateCommand(
         }
 
         if (added.length === 0 && modified.length === 0 && deleted.length === 0) {
+          await persistHostedBindingForWorktree(worktreeRoot, project, wt);
           spinner?.succeed(`Worktree "${wt.name}" is up to date`);
           return {
             success: true,
@@ -1025,6 +1258,7 @@ export async function runWorktreeUpdateCommand(
           await upsertManifestEntries(db, wt.id, manifestUpdates);
         }
         await refreshWorktreeCounts(db, wt.id);
+        await persistHostedBindingForWorktree(worktreeRoot, project, wt);
 
         spinner?.succeed(
           `Updated "${wt.name}": ${added.length} added, ${modified.length} modified, ${deleted.length} deleted`,

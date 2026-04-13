@@ -7,6 +7,10 @@ set -e
 
 CWD=$(pwd)
 
+emit_note() {
+  printf '%s\n' "$@"
+}
+
 if ! command -v lgrep >/dev/null 2>&1; then
   exit 0
 fi
@@ -68,12 +72,27 @@ if [ "$STORAGE_MODE" != "local" ]; then
     if lgrep project list --json >/dev/null 2>&1; then
       BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null || true)
       if [ -n "$BRANCH" ]; then
-        echo "🔍 lgrep: Hosted mode ready for branch \"$BRANCH\". Use lgrep before rg; project/worktree auto-detection will be used when possible."
+        emit_note \
+          "lgrep session start: hosted mode is ready for branch \"$BRANCH\"." \
+          "Use lgrep before rg for discovery, callers, impact, and context." \
+          "Run: lgrep worktree resolve" \
+          "Let hosted auto-detection choose the project/worktree unless resolve says it is ambiguous." \
+          "If connectivity looks wrong, run: lgrep doctor" \
+          "Claude should acknowledge that lgrep is ready before using it for discovery."
       else
-        echo "🔍 lgrep: Hosted mode ready. Use lgrep before rg for repo discovery and context."
+        emit_note \
+          "lgrep session start: hosted mode is ready." \
+          "Use lgrep before rg for repo discovery and context." \
+          "Run: lgrep worktree resolve" \
+          "If connectivity looks wrong, run: lgrep doctor" \
+          "Claude should acknowledge that lgrep is ready before using it for discovery."
       fi
     else
-      echo "⚠️  lgrep: Hosted mode is configured but the remote service could not be reached. Run 'lgrep doctor' if hosted reads fail."
+      emit_note \
+        "lgrep session start: hosted mode is configured but the remote service could not be reached." \
+        "Run: lgrep doctor" \
+        "If hosted reads fail, verify the remote service before falling back to rg." \
+        "Claude should say that lgrep is not ready before falling back."
     fi
   fi
   exit 0
@@ -88,14 +107,18 @@ MAX_TOTAL_WATCHERS=3
 
 CLEANED=$(lgrep clean --zombies --failed --json 2>/dev/null | jq -r '.data.deleted // 0' 2>/dev/null || echo "0")
 if [ "${CLEANED:-0}" -gt 0 ]; then
-  echo "🧹 lgrep: Auto-cleaned $CLEANED stale index(es)"
+  emit_note "lgrep session start: auto-cleaned $CLEANED stale index(es)."
 fi
 
 DOCTOR_OUTPUT=$(lgrep doctor --json 2>/dev/null || echo '{}')
 EMBED_STATUS=$(echo "$DOCTOR_OUTPUT" | jq -r '.data.checks[]? | select(.name == "Embedding provider") | .status' 2>/dev/null)
 
 if [ "$EMBED_STATUS" = "error" ] || [ -z "$EMBED_STATUS" ]; then
-  echo "⚠️  lgrep: No embedding provider configured. Run 'lgrep init' for guided setup."
+  emit_note \
+    "lgrep session start: local mode is configured, but no embedding provider is ready." \
+    "Run: lgrep init" \
+    "After setup, use lgrep before rg." \
+    "Claude should say that lgrep is not ready before falling back."
   exit 0
 fi
 
@@ -103,18 +126,29 @@ INDEXES=$(lgrep list --json 2>/dev/null || echo '{"indexes":[]}')
 IS_INDEXED=$(echo "$INDEXES" | jq -r --arg cwd "$CWD" '.indexes[]? | select(.path == $cwd) | .name' 2>/dev/null | head -1)
 
 if [ -n "$IS_INDEXED" ]; then
+  emit_note \
+    "lgrep session start: local mode is ready for this repo." \
+    "Existing index: $IS_INDEXED" \
+    "Use lgrep before rg for repo discovery and context." \
+    "Claude should acknowledge that lgrep is ready before using it for discovery."
   exit 0
 fi
 
 BUILDING_COUNT=$(echo "$INDEXES" | jq '[.indexes[]? | select(.status == "building")] | length' 2>/dev/null || echo "0")
 if [ "$BUILDING_COUNT" -ge "$MAX_CONCURRENT_BUILDING" ]; then
-  echo "lgrep: Skipping local startup indexing because $BUILDING_COUNT index(es) are already building."
+  emit_note \
+    "lgrep session start: local mode is configured, but startup indexing was skipped because $BUILDING_COUNT index(es) are already building." \
+    "Use lgrep doctor if local search looks stale." \
+    "Claude should confirm whether lgrep is usable before relying on it."
   exit 0
 fi
 
 WATCHER_COUNT=$(echo "$INDEXES" | jq '[.indexes[]? | select(.status == "watching")] | length' 2>/dev/null || echo "0")
 if [ "$WATCHER_COUNT" -ge "$MAX_TOTAL_WATCHERS" ]; then
-  echo "lgrep: Skipping local startup indexing because $WATCHER_COUNT watcher(s) are already running."
+  emit_note \
+    "lgrep session start: local mode is configured, but startup indexing was skipped because $WATCHER_COUNT watcher(s) are already running." \
+    "Use lgrep doctor if local search looks stale." \
+    "Claude should confirm whether lgrep is usable before relying on it."
   exit 0
 fi
 
@@ -125,7 +159,10 @@ if [ -n "$NAME_EXISTS" ]; then
   INDEX_NAME="${INDEX_NAME}-$(echo "$CWD" | md5sum | cut -c1-8 2>/dev/null || echo "$CWD" | md5 | cut -c1-8)"
 fi
 
-echo "🔍 lgrep: Local mode starting watcher for $(basename "$CWD"). Use lgrep before rg for discovery and context."
+emit_note \
+  "lgrep session start: local mode is starting a watcher for $(basename "$CWD")." \
+  "Use lgrep before rg for discovery, callers, impact, and context." \
+  "Claude should acknowledge that lgrep is being prepared for this repo."
 lgrep watch "$CWD" --name "$INDEX_NAME" >/dev/null 2>&1 &
 
 exit 0

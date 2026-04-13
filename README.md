@@ -60,8 +60,9 @@ Targets:
 Session start behavior:
 
 - In local mode, the Claude SessionStart hook can clean stale state and start local watchers automatically.
-- In cloud mode, the SessionStart hook verifies the hosted service is reachable and reminds agents to use `lgrep` before `rg`.
-- For Codex or manual sessions, start with `lgrep` first. Use `lgrep doctor` for local setup/debugging, or `lgrep project list` for hosted connectivity checks.
+- In cloud mode, the SessionStart hook verifies the hosted service is reachable and reminds agents to use `lgrep worktree resolve` before trusting hosted auto-detection in a new worktree.
+- Codex currently uses installed `AGENTS.md` instructions as its startup ritual. OpenAI’s documented Codex surfaces today are `AGENTS.md` and `notify`, not a SessionStart-style hook.
+- For Codex or manual sessions, start with `lgrep` first. Use `lgrep doctor` for local setup/debugging, or `lgrep worktree resolve` plus `lgrep project list` for hosted connectivity checks.
 
 For a machine-wide hosted setup, use:
 
@@ -77,7 +78,8 @@ The intended workflow is:
 
 1. Install lgrep integration.
 2. Let the SessionStart hook prepare local or hosted lgrep automatically when Claude starts.
-3. Use `lgrep search`, `lgrep callers`, `lgrep impact`, or `lgrep context` before broad `rg`/`grep` searches.
+3. If hosted, use `lgrep worktree resolve` to confirm the current worktree binding.
+4. Use `lgrep search`, `lgrep callers`, `lgrep impact`, or `lgrep context` before broad `rg`/`grep` searches.
 
 ## Commands
 
@@ -96,6 +98,8 @@ The intended workflow is:
 | `lgrep clean` | Remove failed/stale/zombie indexes |
 | `lgrep init` | Guided setup for local or cloud profiles |
 | `lgrep profile` | Manage named local/cloud profiles |
+| `lgrep worktree resolve` | Show which hosted project/worktree the current git worktree resolves to |
+| `lgrep worktree bind` | Create or repair an explicit hosted binding for the current git worktree |
 | `lgrep server` | Run or inspect the shared hosted query service |
 | `lgrep server bootstrap` | Bootstrap a hosted project, worktrees, and token |
 | `lgrep server install-remote <ssh-target>` | Provision a self-hosted server over SSH and optionally configure this machine globally |

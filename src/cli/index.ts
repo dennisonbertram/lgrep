@@ -44,6 +44,8 @@ import {
   runWorktreeDeleteCommand,
   runWorktreeUpdateCommand,
   runWorktreeGcCommand,
+  runWorktreeBindCommand,
+  runWorktreeResolveCommand,
 } from './commands/worktree.js';
 import {
   runProjectCreateCommand,
@@ -1456,6 +1458,8 @@ program
         } else if (result.codexProjectAlreadyHasLgrep) {
           console.log(`  ○ AGENTS.md already has lgrep guidance at ${result.codexProjectPath}`);
         }
+
+        console.log('  ○ Codex startup is installed through AGENTS.md guidance; Codex does not currently expose an official SessionStart hook.');
       }
 
       if (result.targetsApplied.includes('mcp')) {
@@ -1468,7 +1472,8 @@ program
 
       console.log('\nStartup guidance:');
       console.log('  - Claude SessionStart should prepare lgrep automatically.');
-      console.log('  - In hosted mode, start with lgrep and let project/worktree auto-detection work before adding manual flags.');
+      console.log('  - Codex uses the installed AGENTS.md session-start ritual because Codex currently exposes AGENTS.md and notify, not a supported SessionStart hook.');
+      console.log('  - In hosted mode, start with `lgrep worktree resolve` to confirm the current binding before relying on hosted auto-detection.');
       console.log('  - In local mode, let the watcher flow keep the repo fresh and use lgrep before rg.');
       console.log('\nlgrep integration is ready.');
     } catch (err) {
@@ -2158,6 +2163,82 @@ worktreeCmd
     } catch (err) {
       if (options.json) {
         console.log(JSON.stringify({ error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command('resolve [path]')
+  .description('Resolve the hosted project/worktree for the current git worktree')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (path: string | undefined, options: { json?: boolean }) => {
+    try {
+      const result = await runWorktreeResolveCommand({
+        path,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      if (!result.success) {
+        console.error(result.error ?? 'Unable to resolve hosted worktree.');
+        process.exit(1);
+      }
+
+      console.log(`Project: ${result.project}`);
+      console.log(`Worktree: ${result.worktree ?? '(project only)'}`);
+      console.log(`Source: ${result.source ?? 'unknown'}`);
+      if (result.branch) console.log(`Branch: ${result.branch}`);
+      if (result.bindingPath) console.log(`Binding: ${result.bindingPath}`);
+      if (result.serverUrl) console.log(`Server: ${result.serverUrl}`);
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
+      } else {
+        console.error(`Error: ${(err as Error).message}`);
+      }
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command('bind [path]')
+  .description('Create or refresh an explicit hosted binding for the current git worktree')
+  .requiredOption('--project <name>', 'Hosted project name')
+  .requiredOption('--worktree <name>', 'Hosted worktree name')
+  .option('-f, --force', 'Allow a non-matching git branch and hosted worktree branch')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (
+    path: string | undefined,
+    options: { project: string; worktree: string; force?: boolean; json?: boolean },
+  ) => {
+    try {
+      const result = await runWorktreeBindCommand({
+        path,
+        project: options.project,
+        worktree: options.worktree,
+        force: options.force,
+        json: options.json,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(result.success ? 0 : 1);
+      }
+
+      console.log(`Bound ${result.project}/${result.worktree} to ${result.repoRoot ?? path ?? process.cwd()}.`);
+      console.log(`Binding file: ${result.bindingPath}`);
+      if (result.branch) console.log(`Branch: ${result.branch}`);
+      if (result.serverUrl) console.log(`Server: ${result.serverUrl}`);
+    } catch (err) {
+      if (options.json) {
+        console.log(JSON.stringify({ success: false, error: (err as Error).message }));
       } else {
         console.error(`Error: ${(err as Error).message}`);
       }

@@ -1,49 +1,19 @@
 import { basename, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { queryServer } from '../../server/client.js';
+import { getServerUrl, queryServer } from '../../server/client.js';
 import type {
   QueryProjectsResponse,
   QueryWorktreesResponse,
   RemoteProject,
   RemoteWorktree,
 } from '../../server/query-server.js';
+import { getGitContext } from './git-context.js';
+import { readHostedWorktreeBinding } from './hosted-worktree-binding.js';
 
 export interface HostedScopeMatch {
   project: string;
   worktree?: string;
-}
-
-interface GitContext {
-  repoRoot: string;
-  repoName: string;
-  branch?: string;
-}
-
-function tryGit(args: string[], cwd: string): string | null {
-  try {
-    return execFileSync('git', args, {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return null;
-  }
-}
-
-function getGitContext(directory: string): GitContext | null {
-  const repoRoot = tryGit(['rev-parse', '--show-toplevel'], directory);
-  if (!repoRoot) {
-    return null;
-  }
-
-  const branch = tryGit(['branch', '--show-current'], directory) || undefined;
-
-  return {
-    repoRoot,
-    repoName: basename(repoRoot),
-    branch,
-  };
+  source?: 'env' | 'binding' | 'heuristic';
+  bindingPath?: string;
 }
 
 function normalizeToken(value: string | null | undefined): string {
@@ -145,11 +115,42 @@ async function listRemoteWorktrees(project?: string): Promise<RemoteWorktree[]> 
   return response.worktrees;
 }
 
-export async function detectHostedScopeForDirectory(
+function getHostedScopeFromEnv(): HostedScopeMatch | null {
+  const project = process.env['LGREP_PROJECT']?.trim();
+  const worktree = process.env['LGREP_WORKTREE']?.trim();
+  if (!project) {
+    return null;
+  }
+
+  return {
+    project,
+    worktree: worktree || undefined,
+    source: 'env',
+  };
+}
+
+export async function resolveHostedScopeForDirectory(
   directory?: string,
 ): Promise<HostedScopeMatch | null> {
   const targetDir = resolve(directory ?? process.cwd());
+  const envScope = getHostedScopeFromEnv();
+  if (envScope) {
+    return envScope;
+  }
+
   const git = getGitContext(targetDir);
+  const binding = await readHostedWorktreeBinding(targetDir, {
+    serverUrl: getServerUrl(),
+  });
+  if (binding) {
+    return {
+      project: binding.binding.projectName,
+      worktree: binding.binding.worktreeName,
+      source: 'binding',
+      bindingPath: binding.path,
+    };
+  }
+
   const projects = await listRemoteProjects();
 
   if (projects.length === 0) {
@@ -173,6 +174,7 @@ export async function detectHostedScopeForDirectory(
     return {
       project: selectedProject.name,
       worktree: worktree?.name,
+      source: 'heuristic',
     };
   }
 
@@ -197,7 +199,12 @@ export async function detectHostedScopeForDirectory(
     return null;
   }
 
-  const project = candidateProjects.get(best.worktree.projectId);
+  const projectId = best.worktree.projectId;
+  if (!projectId) {
+    return null;
+  }
+
+  const project = candidateProjects.get(projectId);
   if (!project) {
     return null;
   }
@@ -205,5 +212,20 @@ export async function detectHostedScopeForDirectory(
   return {
     project: project.name,
     worktree: best.worktree.name,
+    source: 'heuristic',
+  };
+}
+
+export async function detectHostedScopeForDirectory(
+  directory?: string,
+): Promise<HostedScopeMatch | null> {
+  const match = await resolveHostedScopeForDirectory(directory);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    project: match.project,
+    worktree: match.worktree,
   };
 }

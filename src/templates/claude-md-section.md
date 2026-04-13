@@ -5,14 +5,27 @@ Treat `lgrep` as the default entrypoint for understanding this codebase. Use it 
 ### Session Start
 
 - Claude's `SessionStart` hook should prepare `lgrep` automatically.
+- The hook's output is intended to load short startup guidance into the Claude session so Claude knows whether `lgrep` is in local or hosted mode.
 - In **local mode**, the hook can clean stale state and start a watcher for the current repo when that is useful.
-- In **cloud mode**, the hook should verify the hosted service is reachable and keep hosted reads as the default path.
+- In **cloud mode**, the hook should verify the hosted service is reachable, then use `lgrep worktree resolve` to confirm the current hosted worktree when possible.
 - If startup looks wrong, run `lgrep doctor` for setup/debugging.
+- Claude should explicitly confirm in the session whether `lgrep` is ready before relying on it for repo discovery.
+
+### Setup Decision
+
+If `lgrep` is not already working, ask the user whether they want `Local` or `Cloud`.
+
+- `Local` setup: run `lgrep init --mode local` and confirm the embedding path (`auto`, `OpenAI`, or `Ollama`).
+- `Cloud` setup: ask which cloud path they want:
+  - existing hosted service: needs the hosted URL and auth token
+  - shared Postgres/cloud profile: needs the Postgres connection string or env name such as `LGREP_DATABASE_URL`
+  - self-hosted over SSH: needs the SSH target, public server URL, and Postgres connection string
+- After setup, confirm `lgrep` is working before relying on it.
 
 ### Hard Rules
 
 - Prefer `lgrep` before `rg` or `grep` unless you already know the exact literal string, filename, or regex you need.
-- Let hosted auto-detection choose the project/worktree first when you are inside a registered git worktree.
+- Let hosted auto-detection choose the project/worktree first when you are inside a registered git worktree, but use `lgrep worktree resolve` when you start in a new or unfamiliar worktree.
 - In **cloud mode**, do not start local watchers or rebuild local indexes unless the user explicitly asks for a local workflow.
 
 ### Session Workflow
@@ -22,6 +35,7 @@ Treat `lgrep` as the default entrypoint for understanding this codebase. Use it 
 lgrep doctor
 
 # Hosted mode / shared remote workflow
+lgrep worktree resolve
 lgrep project list
 
 # Then use lgrep first

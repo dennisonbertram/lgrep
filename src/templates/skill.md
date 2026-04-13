@@ -19,8 +19,21 @@ Treat `lgrep` as the default tool for understanding a codebase. Use it before br
 
 - Start with `lgrep`, not with broad text search.
 - In **local mode**, the Claude `SessionStart` hook can clean stale state and start a watcher for the current repo automatically.
-- In **cloud mode**, assume the shared remote index is the default path and let hosted auto-detection pick the current project/worktree when possible.
+- In **cloud mode**, assume the shared remote index is the default path and use `lgrep worktree resolve` to confirm the current project/worktree when possible.
+- In Codex, use the repo or global `AGENTS.md` startup ritual because Codex currently relies on instruction loading rather than a supported SessionStart hook.
 - If startup looks wrong, run `lgrep doctor`.
+- At the beginning of the session, explicitly confirm whether `lgrep` is working before relying on it for discovery.
+
+## Setup Decision
+
+If `lgrep` is not already working, ask the user whether they want `Local` or `Cloud`.
+
+- `Local` setup: run `lgrep init --mode local` and confirm the embedding path (`auto`, `OpenAI`, or `Ollama`).
+- `Cloud` setup: ask which cloud path they want:
+  - existing hosted service: needs the hosted URL and auth token
+  - shared Postgres/cloud profile: needs the Postgres connection string or env name such as `LGREP_DATABASE_URL`
+  - self-hosted over SSH: needs the SSH target, public server URL, and Postgres connection string
+- After setup, confirm `lgrep` is working before relying on it.
 
 ## Storage-Aware Behavior
 
@@ -33,6 +46,7 @@ Start with:
 
 ```bash
 lgrep doctor
+lgrep worktree resolve
 lgrep project list
 ```
 

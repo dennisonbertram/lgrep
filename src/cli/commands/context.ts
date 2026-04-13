@@ -26,6 +26,14 @@ export interface ContextCommandOptions {
   showProgress?: boolean;
 }
 
+const HOSTED_SCOPE_ERROR =
+  'No hosted project/worktree match found for the current directory. Either:\n' +
+  '  1. Use --project <name> and optionally --worktree <name>\n' +
+  '  2. Run `lgrep worktree resolve` to confirm the active hosted binding\n' +
+  '  3. Run `lgrep worktree bind --project <name> --worktree <name>` to create an explicit local binding\n' +
+  '  4. Run the command from a git worktree whose branch matches a hosted worktree\n' +
+  '  5. Use --index <name> to query a local index instead';
+
 /**
  * Run the context command to build LLM context for a task.
  */
@@ -41,6 +49,10 @@ export async function runContextCommand(
   const hostedScope = getServerUrl() && !options.index && !options.project && !options.worktree
     ? await detectHostedScopeForDirectory()
     : null;
+
+  if (getServerUrl() && !options.index && !options.project && !options.worktree && !hostedScope) {
+    throw new Error(HOSTED_SCOPE_ERROR);
+  }
 
   if (getServerUrl() && !options.index && (options.project || options.worktree || hostedScope)) {
     const project = options.project ?? hostedScope?.project;

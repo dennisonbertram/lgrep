@@ -192,4 +192,15 @@ describe('hosted read commands', () => {
     expect(result.indexName).toBe('repo-main');
     expect(result.relevantFiles).toHaveLength(1);
   });
+
+  it('fails closed for callers when hosted scope cannot be resolved', async () => {
+    detectHostedScopeForDirectoryMock.mockResolvedValue(null);
+
+    await expect(runCallersCommand('runInstallCommand', {
+      showProgress: false,
+      json: true,
+    })).rejects.toThrow('lgrep worktree resolve');
+
+    expect(queryServerMock).not.toHaveBeenCalled();
+  });
 });

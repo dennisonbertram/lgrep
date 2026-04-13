@@ -104,6 +104,14 @@ export interface SearchCommandResult {
   error?: string;
 }
 
+const HOSTED_SCOPE_ERROR =
+  'No hosted project/worktree match found for the current directory. Either:\n' +
+  '  1. Use --project <name> and optionally --worktree <name>\n' +
+  '  2. Run `lgrep worktree resolve` to confirm the active hosted binding\n' +
+  '  3. Run `lgrep worktree bind --project <name> --worktree <name>` to create an explicit local binding\n' +
+  '  4. Run the command from a git worktree whose branch matches a hosted worktree\n' +
+  '  5. Use --index <name> to query a local index instead';
+
 function canUseHostedSearch(options: SearchOptions): boolean {
   return Boolean(
     getServerUrl() &&
@@ -144,16 +152,15 @@ export async function runSearchCommand(
       ? await detectHostedScopeForDirectory()
       : null;
 
+    if (canUseHostedSearch(options) && !options.project && !options.worktree && !hostedScope) {
+      throw new Error(HOSTED_SCOPE_ERROR);
+    }
+
     if (canUseHostedSearch(options) && (options.project || options.worktree || hostedScope)) {
       const project = options.project ?? hostedScope?.project;
       const worktree = options.worktree ?? hostedScope?.worktree;
       if (!project && !worktree) {
-        throw new Error(
-          'No hosted project/worktree match found for the current directory. Either:\n' +
-          '  1. Use --project <name> and optionally --worktree <name>\n' +
-          '  2. Run the command from a git worktree whose branch matches a hosted worktree\n' +
-          '  3. Use --index <name> to query a local index instead'
-        );
+        throw new Error(HOSTED_SCOPE_ERROR);
       }
 
       spinner?.update('Querying hosted lgrep server...');

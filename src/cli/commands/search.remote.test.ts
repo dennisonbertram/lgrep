@@ -152,4 +152,16 @@ describe('search command (hosted server)', () => {
     expect(queryServerMock).not.toHaveBeenCalled();
     expect(openConfiguredDatabaseMock).toHaveBeenCalled();
   });
+
+  it('fails closed when hosted scope cannot be resolved for the current worktree', async () => {
+    detectHostedScopeForDirectoryMock.mockResolvedValue(null);
+
+    await expect(runSearchCommand('authentication flow', {
+      showProgress: false,
+      json: true,
+    })).rejects.toThrow('lgrep worktree resolve');
+
+    expect(queryServerMock).not.toHaveBeenCalled();
+    expect(openConfiguredDatabaseMock).not.toHaveBeenCalled();
+  });
 });
