@@ -34,7 +34,7 @@ At the beginning of every Codex session in this repo:
 
 1. Determine whether this repo is using local or hosted `lgrep`.
 2. If local or setup seems off, run `lgrep doctor`.
-3. If hosted, run `lgrep worktree resolve` first. If that fails, either run `lgrep worktree bind --project <name> --worktree <name>` or ask the user which hosted project/worktree this repo should use.
+3. If hosted, run `lgrep worktree resolve` first. If that says no match, treat it as an unbound first-run repo until proven otherwise: run `lgrep project list`, then either `lgrep worktree bind --project <name> --worktree <name>` or choose a local workflow.
 4. Run `lgrep project list` only if you need to confirm hosted connectivity.
 5. Then use `lgrep search`, `lgrep callers`, `lgrep impact`, or `lgrep context` before `rg`.
 6. Briefly state in the session that `lgrep` is working, or say what is broken before falling back to `rg`.

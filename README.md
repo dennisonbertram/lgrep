@@ -60,9 +60,9 @@ Targets:
 Session start behavior:
 
 - In local mode, the Claude SessionStart hook can clean stale state and start local watchers automatically.
-- In cloud mode, the SessionStart hook verifies the hosted service is reachable and reminds agents to use `lgrep worktree resolve` before trusting hosted auto-detection in a new worktree.
+- In cloud mode, the SessionStart hook verifies the hosted service is reachable and tells agents when a repo is simply unbound on first run, with concrete next steps (`lgrep project list`, `lgrep worktree bind`, or local indexing).
 - Codex currently uses installed `AGENTS.md` instructions as its startup ritual. OpenAI’s documented Codex surfaces today are `AGENTS.md` and `notify`, not a SessionStart-style hook.
-- For Codex or manual sessions, start with `lgrep` first. Use `lgrep doctor` for local setup/debugging, or `lgrep worktree resolve` plus `lgrep project list` for hosted connectivity checks.
+- For Codex or manual sessions, start with `lgrep` first. Use `lgrep doctor` for local setup/debugging, or `lgrep worktree resolve` plus `lgrep project list` for hosted connectivity and first-run binding checks.
 
 For a machine-wide hosted setup, use:
 
@@ -78,7 +78,7 @@ The intended workflow is:
 
 1. Install lgrep integration.
 2. Let the SessionStart hook prepare local or hosted lgrep automatically when Claude starts.
-3. If hosted, use `lgrep worktree resolve` to confirm the current worktree binding.
+3. If hosted, use `lgrep worktree resolve` to confirm the current worktree binding. If it says no match, treat that as a first-run unbound repo, not a generic outage.
 4. Use `lgrep search`, `lgrep callers`, `lgrep impact`, or `lgrep context` before broad `rg`/`grep` searches.
 
 ## Commands

@@ -5,6 +5,7 @@ import { getIndex } from '../../storage/lance.js';
 import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 import { detectHostedScopeForDirectory } from '../utils/hosted-auto-detect.js';
+import { formatMissingHostedScopeError } from '../utils/hosted-scope-errors.js';
 import type { ContextPackage } from '../../types/context.js';
 import { getServerUrl, queryServer } from '../../server/client.js';
 import type { QueryContextResponse } from '../../server/query-server.js';
@@ -26,14 +27,6 @@ export interface ContextCommandOptions {
   showProgress?: boolean;
 }
 
-const HOSTED_SCOPE_ERROR =
-  'No hosted project/worktree match found for the current directory. Either:\n' +
-  '  1. Use --project <name> and optionally --worktree <name>\n' +
-  '  2. Run `lgrep worktree resolve` to confirm the active hosted binding\n' +
-  '  3. Run `lgrep worktree bind --project <name> --worktree <name>` to create an explicit local binding\n' +
-  '  4. Run the command from a git worktree whose branch matches a hosted worktree\n' +
-  '  5. Use --index <name> to query a local index instead';
-
 /**
  * Run the context command to build LLM context for a task.
  */
@@ -51,7 +44,7 @@ export async function runContextCommand(
     : null;
 
   if (getServerUrl() && !options.index && !options.project && !options.worktree && !hostedScope) {
-    throw new Error(HOSTED_SCOPE_ERROR);
+    throw new Error(formatMissingHostedScopeError());
   }
 
   if (getServerUrl() && !options.index && (options.project || options.worktree || hostedScope)) {

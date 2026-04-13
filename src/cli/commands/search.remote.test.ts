@@ -159,7 +159,7 @@ describe('search command (hosted server)', () => {
     await expect(runSearchCommand('authentication flow', {
       showProgress: false,
       json: true,
-    })).rejects.toThrow('lgrep worktree resolve');
+    })).rejects.toThrow('lgrep project list');
 
     expect(queryServerMock).not.toHaveBeenCalled();
     expect(openConfiguredDatabaseMock).not.toHaveBeenCalled();

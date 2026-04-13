@@ -8,6 +8,8 @@ import { getConfigPath, getLgrepHome } from '../utils/paths.js';
 import { loadConfig } from '../../storage/config.js';
 import { DaemonManager } from '../../daemon/manager.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
+import { resolveHostedScopeForDirectory } from '../utils/hosted-auto-detect.js';
+import { formatMissingHostedScopeFix } from '../utils/hosted-scope-errors.js';
 import { getServerUrl, isServerRunning } from '../../server/client.js';
 import { getClientServerAuthToken } from '../../server/auth.js';
 import {
@@ -413,6 +415,38 @@ async function checkCurrentDirectory(targetPath: string): Promise<CheckResult> {
       message: `Index detection unavailable: ${error instanceof Error ? error.message : String(error)}`,
       fix: 'Run: lgrep doctor after fixing storage configuration',
     };
+  }
+
+  const serverUrl = getServerUrl();
+  if (serverUrl) {
+    try {
+      const scope = await resolveHostedScopeForDirectory(absolutePath);
+      if (scope) {
+        const resolvedScope = scope.worktree
+          ? `Hosted worktree "${scope.worktree}" in project "${scope.project}"`
+          : `Hosted project "${scope.project}"`;
+        const source = scope.source ? ` (${scope.source})` : '';
+        return {
+          name: 'Current directory',
+          status: 'ok',
+          message: `${resolvedScope}${source}`,
+        };
+      }
+
+      return {
+        name: 'Current directory',
+        status: 'warn',
+        message: `No hosted project/worktree binding for ${absolutePath}. This is normal on a first run.`,
+        fix: formatMissingHostedScopeFix(absolutePath),
+      };
+    } catch (error) {
+      return {
+        name: 'Current directory',
+        status: 'warn',
+        message: `Hosted scope detection unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        fix: 'Run: lgrep doctor after verifying the hosted query service is reachable',
+      };
+    }
   }
 
   return {

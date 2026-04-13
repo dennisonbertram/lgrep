@@ -24,6 +24,27 @@ function normalizeToken(value: string | null | undefined): string {
     .replace(/^-+|-+$/g, '');
 }
 
+function isGenericBranch(branch?: string): boolean {
+  const normalized = normalizeToken(branch);
+  if (!normalized) {
+    return false;
+  }
+
+  return new Set([
+    'main',
+    'master',
+    'develop',
+    'development',
+    'dev',
+    'trunk',
+    'default',
+    'stable',
+    'staging',
+    'production',
+    'prod',
+  ]).has(normalized);
+}
+
 function getBranchCandidates(branch?: string): string[] {
   if (!branch) {
     return [];
@@ -163,8 +184,6 @@ export async function resolveHostedScopeForDirectory(
   let selectedProject: RemoteProject | null = null;
   if (exactProjectMatches.length === 1) {
     selectedProject = exactProjectMatches[0] ?? null;
-  } else if (projects.length === 1) {
-    selectedProject = projects[0] ?? null;
   }
 
   if (selectedProject) {
@@ -178,11 +197,16 @@ export async function resolveHostedScopeForDirectory(
     };
   }
 
-  const allWorktrees = await listRemoteWorktrees();
   if (getBranchCandidates(git?.branch).length === 0) {
     return null;
   }
 
+  // Generic branch names like "main" produce too many false positives for first-run repos.
+  if (isGenericBranch(git?.branch)) {
+    return null;
+  }
+
+  const allWorktrees = await listRemoteWorktrees();
   const candidateProjects = new Map<string, RemoteProject>();
   for (const project of projects) {
     candidateProjects.set(project.id, project);

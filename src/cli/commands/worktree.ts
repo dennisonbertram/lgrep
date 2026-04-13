@@ -65,19 +65,12 @@ import {
   resolveHostedScopeForDirectory,
   type HostedScopeMatch,
 } from '../utils/hosted-auto-detect.js';
+import { formatMissingHostedScopeError } from '../utils/hosted-scope-errors.js';
 import {
   writeHostedWorktreeBinding,
   type HostedWorktreeBindingReadResult,
 } from '../utils/hosted-worktree-binding.js';
 import { getGitContext } from '../utils/git-context.js';
-
-const HOSTED_SCOPE_ERROR =
-  'No hosted project/worktree match found for the current directory. Either:\n' +
-  '  1. Use --project <name> and optionally --worktree <name>\n' +
-  '  2. Run `lgrep worktree resolve` to confirm the active hosted binding\n' +
-  '  3. Run `lgrep worktree bind --project <name> --worktree <name>` to create an explicit local binding\n' +
-  '  4. Run the command from a git worktree whose branch matches a hosted worktree\n' +
-  '  5. Use --index <name> to query a local index instead';
 
 async function persistHostedBindingForWorktree(
   directory: string,
@@ -902,7 +895,7 @@ export async function runWorktreeResolveCommand(
       repoRoot: git?.repoRoot,
       branch: git?.branch,
       serverUrl: getServerUrl(),
-      error: HOSTED_SCOPE_ERROR,
+      error: formatMissingHostedScopeError(targetPath),
     };
   }
 

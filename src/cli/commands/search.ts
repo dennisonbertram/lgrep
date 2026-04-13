@@ -13,6 +13,7 @@ import { openConfiguredDatabase } from '../../storage/database-config.js';
 import { createSpinner } from '../utils/progress.js';
 import { detectIndexForDirectory } from '../utils/auto-detect.js';
 import { detectHostedScopeForDirectory } from '../utils/hosted-auto-detect.js';
+import { formatMissingHostedScopeError } from '../utils/hosted-scope-errors.js';
 import {
   ensureWorktreeTables,
   getWorktree,
@@ -104,14 +105,6 @@ export interface SearchCommandResult {
   error?: string;
 }
 
-const HOSTED_SCOPE_ERROR =
-  'No hosted project/worktree match found for the current directory. Either:\n' +
-  '  1. Use --project <name> and optionally --worktree <name>\n' +
-  '  2. Run `lgrep worktree resolve` to confirm the active hosted binding\n' +
-  '  3. Run `lgrep worktree bind --project <name> --worktree <name>` to create an explicit local binding\n' +
-  '  4. Run the command from a git worktree whose branch matches a hosted worktree\n' +
-  '  5. Use --index <name> to query a local index instead';
-
 function canUseHostedSearch(options: SearchOptions): boolean {
   return Boolean(
     getServerUrl() &&
@@ -153,14 +146,14 @@ export async function runSearchCommand(
       : null;
 
     if (canUseHostedSearch(options) && !options.project && !options.worktree && !hostedScope) {
-      throw new Error(HOSTED_SCOPE_ERROR);
+      throw new Error(formatMissingHostedScopeError());
     }
 
     if (canUseHostedSearch(options) && (options.project || options.worktree || hostedScope)) {
       const project = options.project ?? hostedScope?.project;
       const worktree = options.worktree ?? hostedScope?.worktree;
       if (!project && !worktree) {
-        throw new Error(HOSTED_SCOPE_ERROR);
+        throw new Error(formatMissingHostedScopeError());
       }
 
       spinner?.update('Querying hosted lgrep server...');

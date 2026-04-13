@@ -71,21 +71,31 @@ if [ "$STORAGE_MODE" != "local" ]; then
   if [ -n "$SERVER_URL" ]; then
     if lgrep project list --json >/dev/null 2>&1; then
       BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null || true)
-      if [ -n "$BRANCH" ]; then
-        emit_note \
-          "lgrep session start: hosted mode is ready for branch \"$BRANCH\"." \
-          "Use lgrep before rg for discovery, callers, impact, and context." \
-          "Run: lgrep worktree resolve" \
-          "Let hosted auto-detection choose the project/worktree unless resolve says it is ambiguous." \
-          "If connectivity looks wrong, run: lgrep doctor" \
-          "Claude should acknowledge that lgrep is ready before using it for discovery."
+      if lgrep worktree resolve >/dev/null 2>&1; then
+        if [ -n "$BRANCH" ]; then
+          emit_note \
+            "lgrep session start: hosted mode is ready for branch \"$BRANCH\"." \
+            "Use lgrep before rg for discovery, callers, impact, and context." \
+            "Run: lgrep worktree resolve" \
+            "Let hosted auto-detection choose the project/worktree unless resolve says it is ambiguous." \
+            "If connectivity looks wrong, run: lgrep doctor" \
+            "Claude should acknowledge that lgrep is ready before using it for discovery."
+        else
+          emit_note \
+            "lgrep session start: hosted mode is ready." \
+            "Use lgrep before rg for repo discovery and context." \
+            "Run: lgrep worktree resolve" \
+            "If connectivity looks wrong, run: lgrep doctor" \
+            "Claude should acknowledge that lgrep is ready before using it for discovery."
+        fi
       else
         emit_note \
-          "lgrep session start: hosted mode is ready." \
-          "Use lgrep before rg for repo discovery and context." \
-          "Run: lgrep worktree resolve" \
-          "If connectivity looks wrong, run: lgrep doctor" \
-          "Claude should acknowledge that lgrep is ready before using it for discovery."
+          "lgrep session start: hosted mode is reachable, but this repo is not bound to a hosted project/worktree yet." \
+          "This is normal on a first run." \
+          "Run: lgrep project list" \
+          "Then either bind with: lgrep worktree bind --project <name> --worktree <name>" \
+          "Or stay local with: lgrep index \"$CWD\" --name $(basename "$CWD")" \
+          "Claude should say that lgrep is healthy but not ready for hosted reads in this repo yet."
       fi
     else
       emit_note \

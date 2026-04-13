@@ -126,10 +126,10 @@ describe('detectHostedScopeForDirectory', () => {
     });
   });
 
-  it('falls back to the single hosted project when the repo name does not match', async () => {
+  it('returns null for an unbound repo on a generic branch even when only one hosted project exists', async () => {
     execFileSyncMock.mockImplementation((_: string, args: string[]) => {
       if (args.includes('--show-toplevel')) return '/Users/example/repos/unknown\n';
-      if (args.includes('--show-current')) return '\n';
+      if (args.includes('--show-current')) return 'main\n';
       if (args.includes('--git-dir')) return '/Users/example/repos/unknown/.git\n';
       throw new Error(`Unexpected git args: ${args.join(' ')}`);
     });
@@ -188,10 +188,7 @@ describe('detectHostedScopeForDirectory', () => {
 
     const result = await detectHostedScopeForDirectory('/Users/example/repos/unknown');
 
-    expect(result).toEqual({
-      project: 'repo-main',
-      worktree: 'main',
-    });
+    expect(result).toBeNull();
   });
 
   it('returns null when multiple hosted worktrees match equally', async () => {
