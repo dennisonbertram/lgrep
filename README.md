@@ -1,8 +1,12 @@
 # lgrep
 
-AI-powered semantic code search. Find code by meaning, not just text.
+Semantic code search CLI. Find code by meaning, not just text, using a local index (LanceDB) or a Postgres-backed cloud profile.
 
-Search for "authentication logic" and find OAuth handlers, JWT validation, and session management — even if those words never appear in the code. Built-in code intelligence finds dead code, circular dependencies, and shows blast radius before refactoring.
+Search for "authentication logic" and find OAuth handlers, JWT validation, and session management, even if those words never appear in the code. The same index powers code-intelligence commands that find dead code and circular dependencies and show the blast radius of a change.
+
+**Status:** published npm package (version 0.2.1, MIT). The local CLI is the main path. The hosted query service is a preview (see below).
+
+**Languages:** JavaScript, TypeScript, Solidity, Go, Rust, Python, C, C++ and Java (`src/core/ast/languages.ts`).
 
 ## Install
 
@@ -18,7 +22,7 @@ lgrep init
 - `Local` - local index and local cache
 - `Cloud` - Postgres-backed index and Postgres-backed cache
 
-### From Source
+From source:
 
 ```bash
 git clone https://github.com/dennisonbertram/lgrep && cd lgrep
@@ -39,6 +43,16 @@ lgrep search --definition "UserService"
 lgrep context "add rate limiting"
 lgrep intent "what calls awardBadge"
 ```
+
+## Repo map
+
+- `src/cli/` - CLI commands
+- `src/core/` - chunking, embeddings, AST analysis, file watcher, context builder
+- `src/storage/` - index, cache and config storage (LanceDB, Postgres)
+- `src/server/` - hosted query service
+- `src/mcp/` - MCP server (`lgrep-mcp`)
+- `viewer/` - dependency graph web UI
+- `docs/guides/` - deeper guides (providers, remote storage, hosted service, releasing)
 
 ## Agent Integration
 
@@ -173,13 +187,11 @@ For cloud mode, lgrep defaults to Postgres for both the index and the cache. S3/
 
 See [docs/guides/remote-storage.md](docs/guides/remote-storage.md) for setup.
 
-## Hosted Query Service Preview
+## Hosted Query Service (preview)
 
-You can also run lgrep behind a shared HTTP query service instead of giving every agent direct database credentials.
+lgrep can run behind a shared HTTP query service so agents do not need direct database credentials. Today it is a bearer-token-protected, single-tenant query layer for project/worktree discovery, semantic search, callers, impact, and context packages. Hosted semantic `search` and `context` need an embedding provider on the server, such as `OPENAI_API_KEY`.
 
-### Fastest Self-Hosted Path
-
-For a Mac mini, Hetzner box, or any SSH-accessible machine:
+Self-host on any SSH-accessible machine:
 
 ```bash
 export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
@@ -188,89 +200,23 @@ lgrep server install-remote user@host \
   --server-url https://lgrep.example.com
 ```
 
-That will:
-
-- install `lgrep` on the remote host
-- install a supported Node runtime when the host's system `node` is too old
-- install Linux build/runtime prerequisites when the host needs them
-- provision a `launchd`, working `systemd`, or `tmux` service runner
-- create a remote token-store file for hosted auth
-- configure this machine globally for Claude, Codex, and MCP unless you pass `--skip-local-install`
-
-For the exact Hetzner/Mac-mini runbook, including the tmux tunnel/bootstrap flow for many local worktrees, see [docs/guides/self-hosted-ssh-runbook.md](docs/guides/self-hosted-ssh-runbook.md).
-
-### Project Bootstrap
-
-Then register a repo and its worktrees in the same hosted Postgres:
+Register a repo and its worktrees, then query it:
 
 ```bash
-export LGREP_DATABASE_URL="postgres://user:password@host:5432/lgrep"
-
 lgrep server bootstrap /path/to/repo \
   --project repo-main \
   --branch main \
   --worktree 'feature-login|/path/to/repo-feature-login|feature/login'
-```
 
-### Client Usage
-
-After a global install, this machine can just use `lgrep` directly:
-
-```bash
-lgrep project info repo-main
-lgrep worktree list --project repo-main
 lgrep search "authentication flow" --project repo-main
 lgrep callers createSession --project repo-main --worktree feature-login
 ```
 
-If you want to configure another client machine manually:
+Another client machine can point at the service with `LGREP_SERVER_URL` and `LGREP_SERVER_AUTH_TOKEN`. Self-hosted SSH deployments use a filesystem-backed token store (`lgrep server token create`); Railway and other stateless deployments use the service-wide `LGREP_SERVER_AUTH_TOKEN`.
 
-```bash
-export LGREP_SERVER_URL="https://lgrep.example.com"
-export LGREP_SERVER_AUTH_TOKEN="your-hosted-service-token"
-lgrep project info repo-main
-lgrep worktree list --project repo-main
-lgrep search "authentication flow" --project repo-main
-lgrep callers createSession --project repo-main --worktree feature-login
-lgrep impact createSession --project repo-main --worktree feature-login
-lgrep context "trace session token flow" --project repo-main --worktree feature-login
-```
+Planned next, per the earlier README: hosted HTTP MCP transport, richer hosted code intelligence (definitions/usages, deeper impact analysis), and background sync and indexing workers.
 
-Hosted semantic `search` and hosted `context` need a real embedding provider on the server, such as `OPENAI_API_KEY`. Hosted `search --definition` and `search --usages` remain database-backed client flows today.
-
-If you want MCP clients to use the hosted service without shell exports, run:
-
-```bash
-lgrep install --target mcp --global \
-  --server-url https://lgrep.example.com \
-  --server-auth-token <token>
-```
-
-Today this hosted path is a bearer-token-protected, single-tenant query layer for project/worktree discovery, semantic search, callers, impact, and context packages. For self-hosted SSH deployments, `lgrep server install-remote` provisions a filesystem-backed token store on the remote host, which is the recommended auth path today. For Railway and other stateless remote deployments, keep using the service-wide `LGREP_SERVER_AUTH_TOKEN`. See [docs/guides/hosted-query-service.md](docs/guides/hosted-query-service.md) for the hosted multi-worktree workflow, SSH self-host path, Railway deploy path, and current limits.
-
-### If You Want To Use Hosted Mode Today
-
-This is the practical next step if your goal is "one hosted database, many worktrees":
-
-1. Create a `cloud` profile that points at Postgres.
-2. Create one `project` for your repo.
-3. Create one `worktree` per branch or checkout you want searchable.
-4. Run `lgrep server start` on the machine that has Postgres access.
-5. For self-hosted deployments, you can mint a scoped token with `lgrep server token create`.
-6. For Railway and similar remote deployments today, use the shared `LGREP_SERVER_AUTH_TOKEN` service secret.
-7. Point agents at `LGREP_SERVER_URL` plus `LGREP_SERVER_AUTH_TOKEN`.
-
-That is enough to start using hosted lgrep now.
-
-### What We Are Building Next
-
-The next product step is not another setup step for you. It is feature expansion on top of the hosted query service:
-
-- hosted HTTP MCP transport
-- richer hosted code-intel coverage like definitions/usages and deeper impact analysis
-- background sync and hosted indexing workers
-
-Those will make the hosted path more useful for agents, but they are not required for the current multi-worktree setup.
+Details: [hosted-query-service.md](docs/guides/hosted-query-service.md) and [self-hosted-ssh-runbook.md](docs/guides/self-hosted-ssh-runbook.md).
 
 ## Programmatic API
 
@@ -305,9 +251,26 @@ LGREP_HOME="$HOME/Library/Application Support/lgrep-local" lgrep doctor
 LGREP_HOME="$HOME/Library/Application Support/lgrep-local" lgrep index . --name my-project
 ```
 
-## License
+## Configuration
 
-MIT
+By default, lgrep reads config from the active profile. You can manage profiles with `lgrep profile`.
+
+```bash
+lgrep profile list
+lgrep profile create cloud
+lgrep profile use cloud
+lgrep config                   # show all settings
+lgrep config model             # get one
+lgrep config model auto        # set one
+lgrep doctor                   # check everything
+```
+
+You can still override everything with `LGREP_HOME` for a one-off isolated home:
+
+```bash
+LGREP_HOME="$HOME/Library/Application Support/lgrep-local" lgrep doctor
+LGREP_HOME="$HOME/Library/Application Support/lgrep-local" lgrep index . --name my-project
+```
 
 ## Contributing
 
@@ -319,3 +282,7 @@ npm test
 ```
 
 Maintainers: see [docs/guides/releasing.md](docs/guides/releasing.md) for npm release setup and the tag-based publish flow.
+
+## License
+
+MIT
