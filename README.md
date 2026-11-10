@@ -4,7 +4,7 @@ Semantic code search CLI. Find code by meaning, not just text, using a local ind
 
 Search for "authentication logic" and find OAuth handlers, JWT validation, and session management, even if those words never appear in the code. The same index powers code-intelligence commands that find dead code and circular dependencies and show the blast radius of a change.
 
-**Status:** published npm package (version 0.2.1, MIT). The local CLI is the main path. The hosted query service is a preview (see below).
+**Status:** repository version 0.2.1 (MIT). As of November 2026, `npm view lgrep version` returns 0.1.2, so the npm package is older than this source tree; use the source install below for the latest features. The local CLI is the main path. The hosted query service is a preview (see below).
 
 **Languages:** JavaScript, TypeScript, Solidity, Go, Rust, Python, C, C++ and Java (`src/core/ast/languages.ts`).
 
@@ -200,6 +200,8 @@ lgrep server install-remote user@host \
   --server-url https://lgrep.example.com
 ```
 
+This command also configures the local machine globally for Claude, Codex, and MCP (a global `lgrep install` pointed at the new server). Pass `--skip-local-install` to skip that step.
+
 Register a repo and its worktrees, then query it:
 
 ```bash
@@ -211,6 +213,8 @@ lgrep server bootstrap /path/to/repo \
 lgrep search "authentication flow" --project repo-main
 lgrep callers createSession --project repo-main --worktree feature-login
 ```
+
+Hosted `search --definition` and `search --usages` are not sent to the hosted service. They still open the configured database, so a client with only a hosted URL and token will fail on them today.
 
 Another client machine can point at the service with `LGREP_SERVER_URL` and `LGREP_SERVER_AUTH_TOKEN`. Self-hosted SSH deployments use a filesystem-backed token store (`lgrep server token create`); Railway and other stateless deployments use the service-wide `LGREP_SERVER_AUTH_TOKEN`.
 
@@ -228,27 +232,6 @@ const { embeddings } = await embedder.embed(['hello world']);
 
 const ai = createAIProvider({ model: detectBestProvider() });
 const explanation = await ai.generateText('Explain this code...');
-```
-
-## Configuration
-
-By default, lgrep reads config from the active profile. You can manage profiles with `lgrep profile`.
-
-```bash
-lgrep profile list
-lgrep profile create cloud
-lgrep profile use cloud
-lgrep config                   # show all settings
-lgrep config model             # get one
-lgrep config model auto        # set one
-lgrep doctor                   # check everything
-```
-
-You can still override everything with `LGREP_HOME` for a one-off isolated home:
-
-```bash
-LGREP_HOME="$HOME/Library/Application Support/lgrep-local" lgrep doctor
-LGREP_HOME="$HOME/Library/Application Support/lgrep-local" lgrep index . --name my-project
 ```
 
 ## Configuration
